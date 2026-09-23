@@ -7,6 +7,46 @@ Newest first within each phase.
 
 ## Phase 9 — deployment stack, verified locally
 
+### Fresh servers build the static export in place
+
+`frontend/out` remains ignored. A fresh deployment installs the verified Node 24.x line,
+runs `npm ci` and `npm run build`, and checks `frontend/out/index.html` before Compose is
+started. This matches the current bind-mounted Caddy architecture without committing a
+large generated tree or adding an artifact-transfer channel. Caddy now also fails its
+container start immediately if the file is absent instead of serving an empty site.
+
+### Provisioning is part of the API image, not a host-Python procedure
+
+The original account and history scripts lived outside the backend Docker build context,
+so their documented commands could never work on a server with only the Compose stack.
+Their logic now lives under `app.cli`; the old scripts are thin local wrappers. Both CLIs
+therefore use the container's configured `DATABASE_URL`, and neither needs a host virtual
+environment or repository files outside the API image. The history command defaults to
+the most recently completed calendar month only when `--completed-month` is explicit and
+retains the existing seed/config/month cache key.
+
+### Gemini uses the official SDK but remains unvalidated without a real call
+
+Native Gemini support uses the pinned `google-genai==2.25.0` SDK. The adapter performs one
+manual function-calling turn using only the four authorized evidence tools, then one
+structured JSON turn validated by the existing investigation schema and citation/action
+guards. It shares the existing timeout, retry-attempt budget, daily budget, queue,
+cooldown and TEMPLATE fallback. The key is a backend-only runtime environment value and
+is never a Docker build argument or frontend variable.
+
+No authorized key or tested model was placed in this local environment, so the adapter's
+contract is tested but live Gemini mode is not claimed. Model selection is deferred until
+the server can list what the user's key actually supports; documentation alone is not
+treated as proof of availability.
+
+### Evidence revisions now represent meaningful incident transitions
+
+The Phase 7 implementation incremented `evidence_revision` on every telemetry sample.
+That made the incident/revision cache practically ineffective and would have spent provider
+budget repeatedly for an unchanged incident. Revisions now advance on severity, lifecycle,
+acknowledgement or measured command-outcome transitions, while the latest stored observed
+evidence continues to update. Deterministic monitoring cadence is unchanged.
+
 ### The deployment artifact was verified without a host
 
 Phase 9 asks for a deployed persistent target, and no host has ever been chosen or

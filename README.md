@@ -13,10 +13,11 @@ The interface takes visual inspiration from mission-control layouts. It is **not
 official NASA or ISRO system, carries no agency branding, and every physical constant is
 a documented fixture for a fictional vehicle.
 
-Build specification: [`CLAUDE.md`](CLAUDE.md). Current status: **Phase 2 complete** — the
-backend owns a live 1 Hz run with coupled power, battery and thermal models, streamed to
-every console over SSE. Detection, forecasts and recovery arrive in Phase 3. See
-[`docs/validation.md`](docs/validation.md) for exactly which checks were executed.
+Build specification: [`CLAUDE.md`](CLAUDE.md). Current status: **Phase 9 local deployment
+readiness complete; hosted verification pending**. The five-console demonstration,
+stored history, bounded AI investigation path and persistent Compose stack are implemented.
+See [`docs/validation.md`](docs/validation.md) for exactly which checks were executed and
+which public-host checks remain blocked on access.
 
 ---
 
@@ -91,7 +92,7 @@ cd backend && ./.venv/Scripts/python.exe -m alembic upgrade head --sql
 ### 5. Console accounts
 
 ```bash
-cd backend && ./.venv/Scripts/python.exe ../scripts/seed_users.py
+cd backend && ./.venv/Scripts/python.exe -m app.cli.seed_users
 ```
 
 This creates five accounts — `simulator`, `master`, `power`, `thermal`, `flight` — and
@@ -101,13 +102,13 @@ There is no public signup and no role selector.
 To issue new passwords later (this also revokes any live sessions):
 
 ```bash
-cd backend && ./.venv/Scripts/python.exe ../scripts/seed_users.py --reset-passwords
+cd backend && ./.venv/Scripts/python.exe -m app.cli.seed_users --reset-passwords
 ```
 
 ### 6. Frontend
 
 ```bash
-cd frontend && npm install
+cd frontend && npm ci
 ```
 
 ---
@@ -174,14 +175,22 @@ The export build writes to `.next-export`, separate from the dev server's `.next
 
 ## Deployed demo stack
 
+For a fresh Linux server clone, install Node.js **24.x** and npm, then build the ignored
+static export from the committed lock file. Generated `frontend/out` is deliberately not
+committed or transferred:
+
 ```bash
-docker compose up -d --build        # db + api + caddy
-docker compose logs -f api          # inspect
-docker compose down                 # stop, keeping data
+cd frontend
+npm ci
+npm run build
+test -f out/index.html
+cd ..
+docker compose up -d --build
 ```
 
-Build the frontend first: Caddy serves `frontend/out` and proxies `/api` to the API
-container, including Server-Sent Events.
+Caddy refuses to start when `frontend/out/index.html` is missing. It serves that export
+and proxies `/api` to the API container, including Server-Sent Events. The API container
+automatically runs `alembic upgrade head`; do not add a second manual migration step.
 
 Set these in `.env` before bringing the stack up:
 
@@ -189,6 +198,49 @@ Set these in `.env` before bringing the stack up:
 - `APP_ORIGIN` — the exact browser origin, e.g. `http://localhost:8080` or
   `https://your-domain.example`. Cookie scope, CORS and the CSRF origin check all use it.
 - `COOKIE_SECURE=true` on any HTTPS deployment.
+
+For a domain deployment, `SITE_ADDRESS` is the bare domain while `APP_ORIGIN` is its exact
+HTTPS browser origin without a trailing slash. Generate a fresh production
+`SESSION_SECRET` on the server; never reuse the development value.
+
+After the stack is healthy, provision it entirely inside the API container:
+
+```bash
+docker compose exec api python -m app.cli.seed_users --reset-passwords
+docker compose exec api python -m app.cli.generate_history --completed-month
+```
+
+The first command prints five generated passwords once. Run it only in a private SSH
+terminal and do not paste its output into chat or shared logs. The second command creates
+minute summaries plus three bounded 1 Hz evidence windows for the most recently completed
+UTC calendar month. Repeating the same seed/configuration/month returns the cached dataset.
+
+Gemini is an optional backend-only provider. Configure these values privately in the
+server `.env`; never use a `NEXT_PUBLIC_` variable:
+
+```dotenv
+AI_ENABLED=true
+LLM_PROVIDER=gemini
+LLM_MODEL=<model-confirmed-available-to-this-key>
+GEMINI_API_KEY=<server-secret>
+```
+
+The exact model must be selected from the models available to the authorized key and is
+not considered validated until one real investigation succeeds. OpenAI remains supported
+through `LLM_PROVIDER=openai`, `LLM_MODEL` and `LLM_API_KEY`. With either provider absent,
+disabled, timed out, over budget or invalid, the app labels the deterministic result
+`TEMPLATE`.
+
+Routine operations:
+
+```bash
+docker compose ps
+docker compose logs -f api
+docker compose restart api
+docker compose down                 # stop, keeping data
+```
+
+Never run `docker compose down -v`; it deletes the PostgreSQL volume.
 
 On restart the run comes back **paused**; the simulator account resumes or resets it
 explicitly. Stopping containers does not delete stored data.
@@ -218,7 +270,7 @@ frontend/
   app/           login and the five role routes plus shared history
   components/    shell, panels and shared presentation pieces
   lib/           typed API client, session context, shared types
-scripts/         seed_users.py (account provisioning)
+scripts/         local wrappers for the container-native provisioning modules
 docs/            demo.md, validation.md, decisions.md
 ```
 

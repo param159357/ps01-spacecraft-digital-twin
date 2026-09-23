@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | BLOCKED | `docs/validation.md` Phase 9: the Compose stack builds and runs — migrations apply at container start, Caddy serves the export with `/master/` surviving a direct refresh, proxied SSE arrives unbuffered at ~1 s, five clients soaked five minutes with 198 frames each and zero sequence gaps, restart returns the run PAUSED and `down` preserved 7,938 frames. `docs/demo.md` is a full D01–D06 runbook with an offline fallback | **Blocked on a deployment host.** No host chosen or authorized, so there is no deployed URL, no HTTPS and no `COOKIE_SECURE=true` check; the five-laptop rehearsal is also pending |
+| 9 | BLOCKED | `docs/validation.md` Phase 9: fresh-server readiness is complete — reproducible Node 24 static export, guarded Caddy start, container-native account/history CLIs, pinned Gemini SDK/adapter, 130 backend tests, clean ruff/tsc/export/alembic, rebuilt API image and actual cached container history generation. Earlier local Compose/SSE/restart/persistence evidence remains valid. | **Blocked on authorized VPS/domain details.** Public HTTPS, secure-cookie sessions, private account provisioning, exact Gemini model/live call, 10–15 minute deployed five-client rehearsal and physical five-laptop rehearsal remain pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -919,6 +919,44 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 9 (fresh-server readiness continuation)
+
+- Status: local deployment readiness COMPLETE; hosted Phase 9 remains BLOCKED pending an
+  authorized VPS/domain. Phase 10 was not started.
+- Implemented/files changed:
+  - `backend/app/cli/`, `scripts/` — account and completed-month history provisioning now
+    run from the API image while the existing local wrappers continue to work.
+  - `analysis/provider.py`, `analysis/service.py`, settings and dependencies — native
+    `google-genai==2.25.0` provider with the existing four-tool/two-turn/citation/action
+    boundaries, backend-only `GEMINI_API_KEY`, OpenAI preservation and TEMPLATE fallback.
+  - `operations.py` — evidence revisions advance only for meaningful incident transitions,
+    restoring incident/revision deduplication before provider spend is enabled.
+  - `compose.yaml` — passes the backend-only Gemini key and prevents Caddy from starting
+    without `frontend/out/index.html`.
+  - README and demo/decision/validation records — fresh-clone order, private password/key
+    handling and actual check results.
+- Checks actually run and results: **130 backend tests passed** in 125.79 s; Phase 9
+  provisioning 2 passed and Gemini 4 passed; Ruff and TypeScript clean; Next static export
+  succeeded for 9 application routes and produced `out/index.html`; Alembic reported no
+  drift. The rebuilt 102,288,045-byte API image includes the pinned SDK. Both container CLI
+  entry points ran; an actual isolated completed-month generation produced 44,640 minute
+  rows, 4 incidents and 900 bounded 1 Hz frames, then returned the identical cached run on
+  repeat. Updated API/Caddy returned health `ok` and static 200 while the existing database
+  stayed healthy. Image/frontend/public-route scans found no Gemini secret material.
+- Decisions/deviations: fresh servers build the ignored export in place with Node 24,
+  `npm ci` and `npm run build`; no generated output is committed. The real password-reset
+  command was not run because its one-time passwords must remain in the operator's private
+  SSH terminal. No live Gemini claim is made from mocked tests.
+- Missing credentials or external checks: authorized SSH hostname/user, configured SSH
+  confirmation, DNS name, inbound 80/443 confirmation and the user's provider-activation
+  choice. If Gemini is enabled, its key/model must be configured privately and the exact
+  available model selected and tested on the server.
+- Known limitations: no public URL/HTTPS/secure-cookie evidence yet; no live LLM result;
+  no 10–15 minute deployed five-client rehearsal or physical five-laptop rehearsal.
+- Next exact task: deploy this reviewed checkpoint to the authorized VPS, privately
+  provision accounts and Gemini settings, generate/reuse the completed month, then run the
+  public HTTPS, D02/history/fallback/live-provider, restart/persistence and rehearsal checks.
 
 ### 2026-09-23 — Phase 9 (partial)
 

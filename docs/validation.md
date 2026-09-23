@@ -5,15 +5,43 @@ recorded as passing because it "should" pass.
 
 ---
 
-## Phase 9 — deployment stack (partial: local only, no host)
+## Phase 9 — deployment stack (local readiness complete; hosted checks pending)
 
 **Date:** 2026-09-23
-**Status:** the Compose deployment artifact is built, run and measured. The hosted
-deployment is **BLOCKED** — no host has been chosen or authorized for this project, so
-there is no deployed URL, no HTTPS, and no `COOKIE_SECURE=true` verification.
+**Status:** all repository work needed for a fresh-server deployment is implemented and
+validated locally. The hosted deployment remains **BLOCKED** pending an authorized SSH
+target/domain, so there is still no public URL, HTTPS or `COOKIE_SECURE=true` verification.
 
 Everything below ran against the real Compose stack — `ps01-api` image, Caddy and
 PostgreSQL — reached through Caddy on `http://localhost:8080`, not against a dev server.
+
+### Fresh-server readiness added after the original local stack check
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Repository baseline | started from clean, synchronized `main` at `52f01d15cddc906baa74206e39b4aeffb1816843` |
+| 2 | Full backend suite | `./.venv/Scripts/python.exe -m pytest -q`: **130 passed** in **125.79 s** |
+| 3 | Phase 9 provisioning tests | **2 passed**: five active role accounts with Argon2 hashes and no stored plaintext; fresh completed-month generation plus cached repeat |
+| 4 | Gemini adapter tests | **4 passed**: tool conversion/result continuation, structured output, bad citation rejection, timeout/provider error, budget readiness and secret-safe error text |
+| 5 | Ruff | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts`: all checks passed |
+| 6 | TypeScript | `npx tsc --noEmit`: exit 0 |
+| 7 | Static export | Node **24.19.0**, npm **11.17.0**; `npm run build`: exit 0, **9 application routes**; `frontend/out/index.html` exists |
+| 8 | Schema drift | `./.venv/Scripts/python.exe -m alembic check`: no new upgrade operations |
+| 9 | API image | `docker compose build api`: success with pinned `google-genai==2.25.0`; image ID `d156a20b…`, **102,288,045 bytes** |
+| 10 | Container CLIs | both `python -m app.cli.seed_users --help` and `python -m app.cli.generate_history --help` ran inside the API container |
+| 11 | Actual container history path | isolated `ps01_test` database: completed August 2026 generated **44,640 minute rows**, **4 incidents**, **900 selected 1 Hz frames** in **8.516 s**; identical repeat returned `cached: true` in **0.099 s** with the same run ID |
+| 12 | Updated local stack | existing PostgreSQL stayed healthy; rebuilt API and guarded Caddy started; `/api/health` reported `ok`, `/` returned **200**, and API logs show migrations followed by one Uvicorn worker |
+| 13 | Secret boundary | no Gemini secret name/value in frontend, public API route code or Caddy config; no Gemini secret material in Docker image history; test provider errors persist only a generic fallback reason |
+
+The real account-reset command was deliberately **not** run. It prints five generated
+passwords and must be executed by the operator in a private SSH terminal after the hosted
+stack is healthy. The automated fresh-test-database check used explicit test-only
+passwords and verified that only hashes were stored.
+
+Gemini uses the official SDK and its bounded contract is tested, but **live LLM mode is
+not validated**: no authorized key/model was configured locally and no provider request
+was made. The exact tested model therefore remains pending server-side availability
+discovery and one successful authorized investigation.
 
 ### The deployment artifact
 
@@ -83,7 +111,8 @@ now says so.
 - **No browser-based rehearsal of D01–D06 end to end against the Compose stack.** The
   scenarios were verified against a dev server in Phase 8; `docs/demo.md` records those
   numbers and names them as such.
-- **No real LLM call**, unchanged: no authorized provider key.
+- **No real LLM call.** Native Gemini support is implemented and contract-tested, but the
+  key/model have not been configured privately and no exact model is claimed as tested.
 
 ---
 

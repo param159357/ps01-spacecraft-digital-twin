@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.analysis.synthetic import SyntheticHistorySpec, generate_synthetic_month
 from app.config.loader import load_configuration
@@ -20,7 +20,7 @@ def _month(value: str) -> date:
 
 
 def _last_completed_month(today: date | None = None) -> date:
-    first_of_this_month = (today or date.today()).replace(day=1)
+    first_of_this_month = (today or datetime.now(UTC).date()).replace(day=1)
     return (first_of_this_month - timedelta(days=1)).replace(day=1)
 
 
