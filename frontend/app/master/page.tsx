@@ -4,6 +4,7 @@ import { AppShell, headerFromLive } from "@/components/AppShell";
 import { LiveChart } from "@/components/LiveChart";
 import { Panel, PendingPanel, StatusBadge } from "@/components/primitives";
 import { ChannelReadout, ChannelTableRow, useChannelMeta } from "@/components/telemetry";
+import { Phase3Operations } from "@/components/Phase3Operations";
 import { useRequireRole } from "@/lib/auth";
 import { freshnessTone, useLiveStream } from "@/lib/live";
 
@@ -90,7 +91,7 @@ export default function MasterConsole() {
           <div>
             <h1 className="text-lg font-semibold text-ink">Master console</h1>
             <p className="mt-0.5 text-sm text-ink-dim">
-              Overall health and shared telemetry. Recovery approval arrives in Phase 3.
+            Overall health, evidence, forecast comparison and observed recovery.
             </p>
           </div>
           {run?.storage_error ? (
@@ -223,22 +224,8 @@ export default function MasterConsole() {
           </div>
         </Panel>
 
+        <Phase3Operations />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <PendingPanel
-            title="Incidents"
-            phase={3}
-            what="Detection rules, shared incidents and their evidence."
-          />
-          <PendingPanel
-            title="Forecast and action comparison"
-            phase={3}
-            what="Thirty-minute projection with a supported alternative from the same start."
-          />
-          <PendingPanel
-            title="Approval and outcome"
-            phase={3}
-            what="Master approval, then whether measured telemetry actually recovered."
-          />
           <PendingPanel
             title="Vehicle diagram"
             phase={4}

@@ -193,6 +193,35 @@ export default function SimulatorConsole() {
     }
   }
 
+  async function loadD02() {
+    setBusy(true);
+    setError(null);
+    try {
+      await runControl("RESET", { initial_soc_percent: 24 });
+      await setConditions({ extra_load_w: 200, payload_duty_percent: 100 });
+      await runControl("START");
+      await refreshTruth();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load D02.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadD01() {
+    setBusy(true);
+    setError(null);
+    try {
+      await runControl("RESET", { initial_soc_percent: 70, initial_sim_time_s: 3590 });
+      await runControl("START");
+      await refreshTruth();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load D01.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (checking || !user) return null;
 
   const { run, frame, history } = live;
@@ -235,6 +264,17 @@ export default function SimulatorConsole() {
               />
               <ControlButton label="Pause" onClick={() => void operate("PAUSE")} busy={busy || !running} />
               <ControlButton label="Reset" onClick={() => void operate("RESET")} busy={busy} tone="danger" />
+              <ControlButton
+                label="Load D01 eclipse transition"
+                onClick={() => void loadD01()}
+                busy={busy}
+              />
+              <ControlButton
+                label="Load D02 recovery demo"
+                onClick={() => void loadD02()}
+                busy={busy}
+                tone="primary"
+              />
             </div>
             <dl className="mt-4 space-y-1 text-xs">
               <div className="flex justify-between">
@@ -257,6 +297,12 @@ export default function SimulatorConsole() {
             <p className="mt-3 text-[10px] text-ink-faint">
               A reset starts a new run ID and clears chart buffers. Previous runs stay in the
               database.
+            </p>
+            <p className="mt-2 text-[10px] text-warning">
+              D01 starts 10 simulated seconds before the configured eclipse to verify the
+              scheduled transition without waiting an hour. 
+              D02 is a labelled fictional starting condition: 24% observed SOC, 200 W extra
+              load, payload at 100%. It is not an orbital calculation.
             </p>
           </Panel>
 

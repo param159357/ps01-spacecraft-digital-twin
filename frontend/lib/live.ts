@@ -263,8 +263,11 @@ export interface SimulatorTruthView {
   known_commands: Record<string, unknown>;
 }
 
-export function runControl(operation: RunOperation, seed?: number) {
-  return api.post<RunMeta>("/simulator/run", { operation, ...(seed ? { seed } : {}) });
+export function runControl(
+  operation: RunOperation,
+  options: { seed?: number; initial_soc_percent?: number; initial_sim_time_s?: number } = {},
+) {
+  return api.post<RunMeta>("/simulator/run", { operation, ...options });
 }
 
 export function setConditions(update: Partial<SimulatorConditions>) {
