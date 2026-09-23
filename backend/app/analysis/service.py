@@ -158,7 +158,11 @@ class AnalysisService:
                 evidence_revision=0,
                 generation_mode="TEMPLATE",
                 status="QUEUED",
-                result={"dataset": summary["dataset"], "window": summary["window"]},
+                result={
+                    "dataset": summary["dataset"],
+                    "role": summary.get("role"),
+                    "window": summary["window"],
+                },
                 usage={"provider": None, "model": None, "attempts": 0},
             )
             db.add(row)

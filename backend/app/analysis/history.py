@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.contracts.common import Role, Subsystem, may_act_on
 from app.storage.models import (
     AnalysisRow,
     CommandRow,
@@ -76,6 +77,15 @@ def resolve_window(
     return HistoryWindow(period, start_utc, end_utc, label)
 
 
+def _visible(incident: IncidentRow, role: Role) -> bool:
+    """An unrecognised subsystem string is treated as out of scope, never as visible."""
+    try:
+        subsystem = Subsystem(incident.subsystem)
+    except ValueError:
+        return False
+    return may_act_on(role, subsystem)
+
+
 def _command_ids(event: IncidentEventRow) -> set[UUID]:
     result: set[UUID] = set()
     for value in event.evidence_ids or []:
@@ -88,8 +98,16 @@ def _command_ids(event: IncidentEventRow) -> set[UUID]:
     return result
 
 
-def compute_history_summary(db: Session, *, source: str, window: HistoryWindow) -> dict[str, Any]:
-    """Compute facts for exactly one source and one bounded window."""
+def compute_history_summary(
+    db: Session, *, source: str, window: HistoryWindow, role: Role
+) -> dict[str, Any]:
+    """Compute facts for exactly one source, one bounded window and one role.
+
+    Scoping matches `GET /incidents` (section 3 and the Phase 4 decision): a specialist
+    sees its own subsystem's history, the master sees all of it, and the count of
+    incidents belonging to other subsystems is reported without any of their detail —
+    so an empty history is never mistaken for a quiet month.
+    """
     if source not in VALID_SOURCES:
         raise ValueError(f"source must be one of {sorted(VALID_SOURCES)}")
 
@@ -132,6 +150,13 @@ def compute_history_summary(db: Session, *, source: str, window: HistoryWindow) 
                 .limit(MAX_INCIDENT_ROWS)
             ).scalars()
         )
+
+    # Everything below this line is computed from the incidents this role may act on.
+    # The rows themselves are dropped here, not merely hidden in the response, so no
+    # derived statistic can leak another subsystem's activity.
+    in_scope = [row for row in incidents if _visible(row, role)]
+    hidden_from_this_role = len(incidents) - len(in_scope)
+    incidents = in_scope
 
     incident_ids = tuple(row.id for row in incidents)
     events: list[IncidentEventRow] = []
@@ -216,6 +241,10 @@ def compute_history_summary(db: Session, *, source: str, window: HistoryWindow) 
 
     return {
         "dataset": source,
+        "role": role.value,
+        # A count only, with no detail, of incidents in this window that belong to other
+        # subsystems. Without it an empty list reads as "nothing happened".
+        "hidden_from_this_role": hidden_from_this_role,
         "window": {
             "period": window.period,
             "label": window.label,
@@ -275,6 +304,8 @@ def render_period_review(summary: dict[str, Any]) -> dict[str, Any]:
         "generation_mode": "TEMPLATE",
         "title": f"{summary['dataset']} — {summary['window']['label']}",
         "dataset": summary["dataset"],
+        "role": summary.get("role"),
+        "hidden_from_this_role": summary.get("hidden_from_this_role", 0),
         "window": summary["window"],
         "findings": findings,
         "severity_mix": summary["incidents"]["severity_mix"],
@@ -284,14 +315,21 @@ def render_period_review(summary: dict[str, Any]) -> dict[str, Any]:
         "limitations": [
             "This report is a deterministic rendering of stored observations and events.",
             "It does not infer hidden fault truth or establish root cause.",
+            (
+                f"Scoped to the {summary.get('role', 'MASTER')} account; "
+                f"{summary.get('hidden_from_this_role', 0)} incidents in this window "
+                "belong to other subsystems and are not counted here."
+            ),
         ],
     }
 
 
 def history_window_key(summary: dict[str, Any]) -> str:
+    """Cache key. The role is part of it: two roles see different facts for the same
+    window, so a review generated for the master must never be served to a specialist."""
     window = summary["window"]
     return (
-        f"history:{summary['dataset']}:{window['period']}:"
+        f"history:{summary['dataset']}:{summary.get('role', 'MASTER')}:{window['period']}:"
         f"{window['start_utc']}:{window['end_utc']}:history-review-1"
     )
 

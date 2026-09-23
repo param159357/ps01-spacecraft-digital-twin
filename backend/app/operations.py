@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -21,6 +22,8 @@ from app.forecasts.estimator import ObservedStateEstimate, estimate_observed_sta
 from app.monitoring.engine import IncidentEngine
 from app.storage.db import session_scope
 from app.storage.models import CommandRow, ForecastRow, IncidentEventRow, IncidentRow
+
+logger = logging.getLogger(__name__)
 
 
 class OperationalService:
@@ -49,7 +52,7 @@ class OperationalService:
             self.bus.publish(
                 StreamEventType.INCIDENT, incident.model_dump(mode="json"), incident.run_id
             )
-            self._enqueue_incident_change(incident.id, change)
+            await self._enqueue_incident_change(incident.id, change)
 
     async def process_frame(self, frame: TelemetryFrame) -> None:
         self._latest_frame = frame
@@ -70,11 +73,10 @@ class OperationalService:
             self.bus.publish(
                 StreamEventType.INCIDENT, incident.model_dump(mode="json"), frame.run_id
             )
-            self._enqueue_incident_change(incident.id, change)
+            await self._enqueue_incident_change(incident.id, change)
         failed = await asyncio.to_thread(self._observe_command_outcomes, frame)
-        if self.analysis:
-            for incident_id in failed:
-                self.analysis.enqueue_incident(incident_id, "FAILED_RECOVERY")
+        for incident_id in failed:
+            await self._enqueue_safely(incident_id, "FAILED_RECOVERY")
 
     def list_incidents(self, run_id: UUID | None) -> list[Incident]:
         return sorted(
@@ -356,11 +358,32 @@ class OperationalService:
                     )
         return tuple(changes)
 
-    def _enqueue_incident_change(self, incident_id: UUID, changes: tuple[str, ...]) -> None:
+    async def _enqueue_incident_change(self, incident_id: UUID, changes: tuple[str, ...]) -> None:
+        """Hand an incident to the investigation queue without letting it affect the loop.
+
+        Two rules from section 1.3 apply here. The enqueue opens a database session, so
+        it runs in a worker thread rather than on the event loop that also serves SSE.
+        And an AI-path failure must never delay or disable a deterministic warning, so
+        every exception is logged and swallowed: the incident has already been persisted
+        and published by the time this runs.
+        """
         if not self.analysis:
             return
         for trigger in changes:
-            self.analysis.enqueue_incident(incident_id, trigger)
+            await self._enqueue_safely(incident_id, trigger)
+
+    async def _enqueue_safely(self, incident_id: UUID, trigger: str) -> None:
+        if not self.analysis:
+            return
+        try:
+            await asyncio.to_thread(self.analysis.enqueue_incident, incident_id, trigger)
+        except Exception:  # noqa: BLE001 - the investigator must never break the live loop
+            logger.exception(
+                "investigation enqueue failed for incident %s (%s); "
+                "telemetry and deterministic alerts are unaffected",
+                incident_id,
+                trigger,
+            )
 
     def _persist_forecast(self, f: Any) -> None:
         with session_scope() as db:

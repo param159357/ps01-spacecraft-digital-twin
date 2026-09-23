@@ -13,7 +13,8 @@ from app.analysis.history import (
     compute_history_summary,
     resolve_window,
 )
-from app.api.deps import require_csrf, require_operational
+from app.api.deps import current_role, require_csrf, require_operational
+from app.contracts.common import Role
 from app.storage.db import get_session
 
 router = APIRouter(tags=["history"])
@@ -42,9 +43,12 @@ def history_summary(
     period: str = Query(pattern="^(daily|weekly|monthly|custom)$"),
     start: date = Query(),
     end: date | None = Query(default=None),
+    role: Role = Depends(current_role),
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    return compute_history_summary(db, source=source, window=_window(period, start, end))
+    return compute_history_summary(
+        db, source=source, window=_window(period, start, end), role=role
+    )
 
 
 @router.post(
@@ -52,11 +56,14 @@ def history_summary(
     dependencies=[Depends(require_operational), Depends(require_csrf)],
 )
 def history_review(
-    body: ReviewRequest, request: Request, db: Session = Depends(get_session)
+    body: ReviewRequest,
+    request: Request,
+    role: Role = Depends(current_role),
+    db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     window = _window(body.period, body.start, body.end)
     try:
-        summary = compute_history_summary(db, source=body.source, window=window)
+        summary = compute_history_summary(db, source=body.source, window=window, role=role)
     except ValueError as exc:
         raise HTTPException(
             status_code=422,

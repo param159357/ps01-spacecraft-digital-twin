@@ -30,6 +30,39 @@ def _assert_incident_access(incident: IncidentRow | None, role: Role) -> Inciden
     return incident
 
 
+def _forbidden() -> HTTPException:
+    return HTTPException(
+        403,
+        {"error": "SUBSYSTEM_NOT_ASSIGNED", "message": "Analysis is outside this role's scope."},
+    )
+
+
+def _assert_analysis_access(db: Session, row: AnalysisRow, role: Role) -> None:
+    """Fail closed. An analysis whose scope cannot be established is not served.
+
+    An incident investigation follows its incident's subsystem. A period review is
+    scoped by the role it was computed for, which is recorded in `window_key`, because
+    two roles legitimately see different facts for the same window.
+    """
+    if row.incident_id is not None:
+        incident = db.get(IncidentRow, row.incident_id)
+        if incident is None:
+            raise _forbidden()
+        try:
+            subsystem = Subsystem(incident.subsystem)
+        except ValueError as exc:
+            raise _forbidden() from exc
+        if not may_act_on(role, subsystem):
+            raise _forbidden()
+        return
+    if row.window_key:
+        parts = row.window_key.split(":", 3)
+        if len(parts) < 3 or parts[2] != role.value:
+            raise _forbidden()
+        return
+    raise _forbidden()
+
+
 @router.post(
     "/incidents/{incident_id}/investigate",
     dependencies=[Depends(require_operational), Depends(require_csrf)],
@@ -78,14 +111,5 @@ def get_analysis(
     row = db.get(AnalysisRow, analysis_id)
     if row is None:
         raise HTTPException(404, {"error": "ANALYSIS_NOT_FOUND", "message": "Analysis not found."})
-    if row.incident_id:
-        incident = db.get(IncidentRow, row.incident_id)
-        if incident and not may_act_on(role, Subsystem(incident.subsystem)):
-            raise HTTPException(
-                403,
-                {
-                    "error": "SUBSYSTEM_NOT_ASSIGNED",
-                    "message": "Analysis is outside this role's scope.",
-                },
-            )
+    _assert_analysis_access(db, row, role)
     return request.app.state.analysis.get(analysis_id)

@@ -901,8 +901,8 @@ This delivered specification does not inspect or assert implementation status in
 | 3 | COMPLETE | `docs/validation.md` Phase 3: 79 backend tests pass; D01 eclipse opens no false incident; D02 projects 19.7% vs 23.9%, applies once, and measured load falls 380.3 → 299.6 W with `IMPROVED` outcome | Phase 3 done |
 | 4 | COMPLETE | `docs/validation.md` Phase 4: 91 backend tests pass; all 28 channels carry a model or a declared profile; link reports unavailable outside a scheduled pass; specialist incident lists are role-scoped; five consoles reviewed at 1366x768 and 1920x1080 | Phase 4 done |
 | 5 | COMPLETE | `docs/validation.md` Phase 5: 103 backend tests pass; D04 live gives IMPROVED with load 330.7 -> 179.7 W, and with a failed isolator gives APPLIED + NO_CHANGE with load unmoved; D03 escalates WARNING -> CRITICAL; no permanent-damage claim | Phase 5 done |
-| 6 | COMPLETE | `docs/validation.md` Phase 6: 107 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; real API/UI show 100% coverage and zero hidden-field hits | Phase 6 done |
-| 7 | COMPLETE | `docs/validation.md` Phase 7: 112 backend tests pass; one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; restarted real API/UI showed a cited `TEMPLATE` investigation with zero hidden-field hits. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
+| 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
+| 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | NOT_STARTED | None recorded here | Essential checks |
 | 9 | NOT_STARTED | None recorded here | Deploy and rehearse |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
@@ -919,6 +919,50 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 6/7 review and fixes
+
+- Status: Phases 6 and 7 verified independently and remain COMPLETE; two defects found and
+  fixed, one recorded as open.
+- Implemented/files changed:
+  - `analysis/history.py`, `api/history.py` — `compute_history_summary` takes the signed-in
+    role and drops out-of-scope incident rows before any statistic is derived, so severity
+    mix, durations, recurrence and command-outcome counts cannot leak another subsystem's
+    activity through an aggregate. The response carries `role` and `hidden_from_this_role`,
+    matching the Phase 4 pattern on `GET /incidents`. Coverage stays unscoped because minute
+    coverage describes the dataset, not a subsystem. The review cache key includes the role.
+  - `api/analysis.py` — `GET /analyses/{id}` fails closed: an investigation follows its
+    incident's subsystem, a period review is checked against the role recorded in its
+    window key, and an analysis whose scope cannot be established is refused. Previously a
+    missing incident row skipped the check entirely.
+  - `operations.py` — the investigation enqueue runs through `asyncio.to_thread` and
+    swallows its own exceptions with a log line, so neither its database I/O nor its
+    failures can reach the 1 Hz loop.
+  - `frontend/app/history/page.tsx` — states the scope and the hidden count when a
+    specialist's window contains other subsystems' incidents.
+  - `tests/test_phase6.py`, `tests/test_phase7.py` — four regression tests: scoping in all
+    three directions from one fixture, a period review refused to another role, the enqueue
+    running off the event loop, and a raising analysis service leaving the loop unharmed.
+- Checks actually run and results: 116 backend tests pass (108.02 s); ruff, `tsc --noEmit`,
+  `npm run build` and `alembic check` all clean. Driven through a real Uvicorn server
+  against `ps01_test`: `flight` now receives `distinct_count: 0` with
+  `hidden_from_this_role: 5` where it previously received the master's response
+  byte-for-byte; a master-generated review returns 403 to `flight`, whose own review is a
+  separate record reporting zero incidents and naming its own scope. The run stayed
+  RUNNING through queued and completed investigations with no enqueue failure logged.
+  Full tables in `docs/validation.md`.
+- Decisions/deviations from this specification: none new — both fixes bring the code back
+  to section 3, section 12.2 and section 1.3. Reasoning in `docs/decisions.md`.
+- Missing credentials or external checks: unchanged. No authorized provider key or model,
+  so `LLM` mode is still unvalidated and `TEMPLATE` is the only mode this machine has
+  produced. Deployment remains unverified.
+- Known limitations: investigation dedup keys on `(incident_id, evidence_revision)`, but
+  the revision increments on every persisted sample — a live incident reached revision 38
+  in about forty seconds — so the cache never hits for a live incident and repeated manual
+  investigations do duplicate work. The daily budget and the automatic cooldown still bound
+  provider spend. Resolve before enabling a provider. Reviews cached under the pre-fix
+  window key are refused and simply regenerate under the new one.
+- Next exact task: Phase 8 — the essential cross-phase integration checks in section 13.2.
 
 ### 2026-09-23 — Phase 7
 

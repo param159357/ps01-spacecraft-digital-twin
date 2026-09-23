@@ -23,7 +23,7 @@ from app.contracts.actions import (
     CommandStatus,
     RecoveryOutcome,
 )
-from app.contracts.common import Subsystem
+from app.contracts.common import Role, Subsystem
 from app.contracts.incidents import Acknowledgement, Incident, IncidentEvent, Lifecycle, Severity
 from app.operations import OperationalService
 from app.storage.models import (
@@ -74,6 +74,7 @@ def test_synthetic_month_statistics_tools_and_real_api(client, clean_runs, sessi
             db,
             source="SYNTHETIC",
             window=resolve_window("monthly", spec.month),
+            role=Role.MASTER,
         )
         assert summary["dataset"] == "SYNTHETIC"
         assert summary["coverage"]["coverage_percent"] == 100.0
@@ -202,6 +203,7 @@ def test_long_incident_is_counted_once_even_with_many_events(session_factory, en
             db,
             source="SYNTHETIC",
             window=resolve_window("monthly", date(2026, 8, 1)),
+            role=Role.MASTER,
         )
         assert summary["incidents"]["distinct_count"] == 1
         assert summary["incidents"]["total_duration_s"] == 28_800.0
@@ -317,3 +319,114 @@ def test_live_lifecycle_acknowledgement_and_command_changes_write_timeline_event
     assert kinds.count("ACKNOWLEDGED") == 1
     assert kinds.count("COMMAND_STATUS") == 2
     assert kinds.count("COMMAND_OUTCOME") == 1
+
+
+def _scoped_fixture(session_factory) -> None:
+    """One completed synthetic window holding a power incident and a flight incident."""
+    start = datetime(2026, 5, 4, 9, tzinfo=UTC)
+    with session_factory() as db:
+        run = Run(
+            source="SYNTHETIC",
+            seed=91,
+            config_version="test",
+            model_version="test",
+            sim_epoch_utc=datetime(2026, 5, 1, tzinfo=UTC),
+            status="STOPPED",
+            control_revision=0,
+            label="role-scope-test",
+            ended_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        db.add(run)
+        db.flush()
+        for subsystem, rule_id, entity in (
+            ("POWER", "ENERGY_RESERVE", "battery"),
+            ("POWER", "ACTUATOR_MISMATCH", "OPTIONAL_A"),
+            ("FLIGHT_SYSTEMS", "RESET_RECURRENCE", "computer"),
+        ):
+            db.add(
+                IncidentRow(
+                    run_id=run.id,
+                    rule_id=rule_id,
+                    rule_version="test",
+                    family=f"{subsystem}_TEST",
+                    subsystem=subsystem,
+                    affected_entity=entity,
+                    affected_groups=[subsystem],
+                    severity="WARNING",
+                    lifecycle="RESOLVED",
+                    first_seen_utc=start,
+                    last_seen_utc=start + timedelta(minutes=20),
+                    evidence={"observed_evidence": []},
+                )
+            )
+        db.add(
+            HistoryBucketRow(
+                run_id=run.id,
+                minute_utc=start,
+                aggregates={"battery_soc": 55.0},
+                sample_count=60,
+                valid_sample_count=60,
+            )
+        )
+        db.commit()
+
+
+def test_history_is_scoped_to_the_signed_in_role(client, clean_runs, session_factory, engine):
+    """A specialist must not read another subsystem's history.
+
+    `GET /incidents` has been role-scoped since Phase 4. Section 12.2 gives history the
+    same contract, but it was returning identical facts to every operational account —
+    including recurrence rows naming another subsystem's entity.
+    """
+    with engine.begin() as connection:
+        connection.execute(text("TRUNCATE telemetry_frames, runs RESTART IDENTITY CASCADE"))
+    _scoped_fixture(session_factory)
+    path = "/api/history/summary?source=SYNTHETIC&period=monthly&start=2026-05-01"
+
+    login(client, "master")
+    master = client.get(path)
+    assert master.status_code == 200, master.text
+    assert master.json()["role"] == "MASTER"
+    assert master.json()["incidents"]["distinct_count"] == 3
+    assert master.json()["hidden_from_this_role"] == 0
+
+    login(client, "flight")
+    flight = client.get(path)
+    assert flight.status_code == 200, flight.text
+    body = flight.json()
+    assert body["role"] == "FLIGHT_SYSTEMS"
+    assert body["incidents"]["distinct_count"] == 1
+    assert body["hidden_from_this_role"] == 2
+    # No derived statistic may carry another subsystem's activity, not even an aggregate.
+    assert body["incidents"]["severity_mix"]["WARNING"] == 1
+    assert "OPTIONAL_A" not in flight.text
+    assert "battery" not in flight.text
+    # Coverage describes the dataset, not a subsystem, so it is deliberately unscoped.
+    assert body["coverage"]["covered_minutes"] == master.json()["coverage"]["covered_minutes"]
+
+    login(client, "power")
+    power = client.get(path).json()
+    assert power["incidents"]["distinct_count"] == 2
+    assert power["hidden_from_this_role"] == 1
+
+
+def test_a_period_review_is_not_served_to_another_role(
+    client, clean_runs, session_factory, engine
+):
+    with engine.begin() as connection:
+        connection.execute(text("TRUNCATE telemetry_frames, runs RESTART IDENTITY CASCADE"))
+    _scoped_fixture(session_factory)
+    body = {"source": "SYNTHETIC", "period": "monthly", "start": "2026-05-01"}
+
+    login(client, "master")
+    created = client.post("/api/history/review", json=body, headers=csrf_headers(client))
+    assert created.status_code == 200, created.text
+    master_analysis = created.json()["analysis_id"]
+
+    login(client, "flight")
+    assert client.get(f"/api/analyses/{master_analysis}").status_code == 403
+    # The specialist's own review is a separate cached record computed from its own facts.
+    own = client.post("/api/history/review", json=body, headers=csrf_headers(client))
+    assert own.status_code == 200, own.text
+    assert own.json()["analysis_id"] != master_analysis
+    assert client.get(f"/api/analyses/{own.json()['analysis_id']}").status_code == 200

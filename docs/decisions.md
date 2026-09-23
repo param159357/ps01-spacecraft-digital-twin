@@ -5,6 +5,61 @@ Newest first within each phase.
 
 ---
 
+## Phase 7 review — defects found by independent verification
+
+Two defects were found by reviewing the Phase 6/7 work against the repository rather than
+against its completion report, and driving the real HTTP API. Both are fixed.
+
+### History is scoped by role, exactly as the live incident list is
+
+`GET /history/summary` and `POST /history/review` guarded only "is this an operational
+account". Signing in as `flight` and as `master` and requesting the same window returned
+**byte-for-byte identical** responses, including a recurrence row naming
+`ACTUATOR_MISMATCH` on `OPTIONAL_A` — a power entity a flight specialist cannot act on.
+Section 3 requires role authorization on every endpoint "including SSE and history",
+section 12.2 lists both routes as role-scoped, and Phase 4 had already established the
+pattern on `GET /incidents`.
+
+The filter is applied to the incident rows themselves, before any statistic is derived, so
+severity mix, durations, recurrence and command-outcome counts cannot leak another
+subsystem's activity through an aggregate. `hidden_from_this_role` reports how many
+incidents in the window belong elsewhere — a count with no detail, for the same reason
+Phase 4 added it: an empty list must not read as a quiet month. Coverage is deliberately
+*not* scoped, because minute coverage is a property of the dataset, not of a subsystem.
+
+The role is part of the review cache key. Two roles legitimately compute different facts
+for one window, so a review generated for the master must never be served to a specialist,
+and `GET /analyses/{id}` now fails closed: an analysis whose scope cannot be established
+is refused rather than returned.
+
+### An AI-path failure cannot disturb the live loop
+
+`_enqueue_incident_change` ran on the event loop and was unguarded, while every
+neighbouring database call in `process_frame` deliberately used `await
+asyncio.to_thread(...)`. Two consequences: the enqueue's `SELECT` and `INSERT` blocked the
+loop that also serves SSE, and because `enqueue_incident` raises (`KeyError` for a missing
+incident, or any database error), an exception propagated out of `process_frame` and
+abandoned the rest of that tick's incident batch — incidents after the failing one were
+never published. The runner's per-tick `except` would have kept the loop alive and hidden
+it, which is precisely how the Phase 5 console freeze survived three phases.
+
+The enqueue now runs in a worker thread and swallows its own exceptions with a log line.
+By the time it runs the incident is already persisted and published, so nothing
+deterministic depends on it. Section 1.3 is explicit that AI failure must not delay or
+disable telemetry, deterministic warnings or forecasts.
+
+### Known, not fixed
+
+Investigation dedup keys on `(incident_id, evidence_revision)`, but `evidence_revision`
+increments on every persisted sample — a live incident reached revision 38 in about forty
+seconds — so two manual investigations seconds apart produce two separate analyses and the
+cache never hits for a live incident. The daily budget and the automatic cooldown still
+bound provider spend, so this wastes work rather than exhausting anything. It should be
+resolved before a provider is ever enabled, by keying on a revision that changes when the
+evidence materially changes, or by giving manual requests a short cooldown of their own.
+
+---
+
 ## Phase 7 — bounded live investigator
 
 ### One process owns one analysis worker

@@ -13,6 +13,10 @@ type Period = "daily" | "weekly" | "monthly" | "custom";
 
 interface HistorySummary {
   dataset: Source;
+  role: string;
+  // Incidents in this window that belong to other subsystems: a count only, so an empty
+  // specialist history is never read as a quiet month.
+  hidden_from_this_role: number;
   window: { period: Period; label: string; start_utc: string; end_utc: string; complete: boolean };
   coverage: { run_count: number; expected_minutes: number; covered_minutes: number; coverage_percent: number; sample_count: number; valid_sample_count: number; valid_sample_percent: number };
   incidents: { distinct_count: number; severity_mix: Record<string, number>; total_duration_s: number; mean_duration_s: number };
@@ -144,6 +148,7 @@ export default function HistoryPage() {
               <ValueReadout label="Valid samples" value={summary.coverage.valid_sample_percent.toFixed(2)} unit="%" tone="nominal" note={`${summary.coverage.run_count} source run(s)`} />
               <ValueReadout label="Mean duration" value={fmtSeconds(summary.incidents.mean_duration_s)} tone="accent" />
             </div>
+            {summary.hidden_from_this_role > 0 ? <p className="mt-3 text-xs text-ink-faint">Scoped to the {summary.role} account. {summary.hidden_from_this_role} incident{summary.hidden_from_this_role === 1 ? "" : "s"} in this window belong to other subsystems and are not counted above.</p> : null}
             {summary.limits.truncated ? <p className="mt-3 text-xs text-warning">The bounded query reached its row cap.</p> : null}
           </Panel>
 

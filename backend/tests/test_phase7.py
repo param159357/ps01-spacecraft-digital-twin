@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from app.analysis.provider import ProviderError, ProviderResult, ProviderTimeout
 from app.analysis.service import AnalysisService
 from app.config.loader import load_configuration
 from app.config.settings import Settings
+from app.operations import OperationalService
 from app.storage.models import IncidentRow, Run
 from tests.conftest import csrf_headers, login, logout
 
@@ -235,3 +237,68 @@ def test_queue_bound_cooldown_and_trigger_allowlist(session_factory, engine):
     assert cooldown["result"]["fallback_reason"] == "COOLDOWN"
     with pytest.raises(ValueError, match="unsupported investigation trigger"):
         service.enqueue_incident(first.id, "EVERY_TELEMETRY_FRAME")
+
+
+def test_a_failing_investigation_enqueue_cannot_disable_deterministic_alerts(session_factory):
+    """Section 1.3: AI failure must not delay or disable deterministic warnings.
+
+    The enqueue used to run on the event loop with no guard, so a raise inside it
+    propagated out of `process_frame` and abandoned the rest of that tick's incident
+    batch — the incidents after the failing one were never published.
+    """
+
+    class ExplodingAnalysis:
+        def __init__(self) -> None:
+            self.calls: list[tuple[UUID, str]] = []
+
+        def enqueue_incident(self, incident_id: UUID, trigger: str, *, manual: bool = False):
+            self.calls.append((incident_id, trigger))
+            raise RuntimeError("provider registry unavailable")
+
+    class RecordingBus:
+        def __init__(self) -> None:
+            self.published: list[str] = []
+
+        def publish(self, event_type, payload, run_id=None) -> None:
+            self.published.append(getattr(event_type, "value", str(event_type)))
+
+    analysis = ExplodingAnalysis()
+    bus = RecordingBus()
+    service = OperationalService(load_configuration(), bus, analysis)
+
+    first, second = _incident(session_factory), _incident(session_factory)
+
+    async def drive() -> None:
+        await service._enqueue_incident_change(first.id, ("INCIDENT_OPENED",))
+        await service._enqueue_incident_change(second.id, ("SEVERITY_ESCALATED",))
+        await service._enqueue_safely(first.id, "FAILED_RECOVERY")
+
+    # No exception escapes, and every trigger was still attempted.
+    asyncio.run(drive())
+    assert [trigger for _, trigger in analysis.calls] == [
+        "INCIDENT_OPENED",
+        "SEVERITY_ESCALATED",
+        "FAILED_RECOVERY",
+    ]
+
+
+def test_the_investigation_enqueue_does_not_run_on_the_event_loop(session_factory):
+    """The enqueue opens a database session, so it belongs in a worker thread."""
+    loop_thread: list[int] = []
+    enqueue_thread: list[int] = []
+
+    class ThreadRecordingAnalysis:
+        def enqueue_incident(self, incident_id: UUID, trigger: str, *, manual: bool = False):
+            enqueue_thread.append(threading.get_ident())
+            return {"status": "QUEUED"}
+
+    service = OperationalService(load_configuration(), object(), ThreadRecordingAnalysis())
+    incident = _incident(session_factory)
+
+    async def drive() -> None:
+        loop_thread.append(threading.get_ident())
+        await service._enqueue_incident_change(incident.id, ("INCIDENT_OPENED",))
+
+    asyncio.run(drive())
+    assert enqueue_thread and loop_thread
+    assert enqueue_thread[0] != loop_thread[0]

@@ -5,6 +5,61 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 6/7 independent review and two fixes
+
+**Date:** 2026-09-23
+**Method:** the Phase 6 and Phase 7 work was reviewed against the repository rather than
+against its completion report, and driven through a real Uvicorn server — not `TestClient`
+— pointed at the `ps01_test` database, so the development database and its accounts were
+untouched.
+
+### Re-run of the claimed checks
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Full backend suite, as delivered | **112 passed**, 76.43 s — the claimed figure is accurate |
+| 2 | `ruff check app tests ../scripts` | All checks passed. (`ruff check .` reports 11 errors, all in `migrations/`, pre-existing since Phase 1 and outside the documented lint scope) |
+| 3 | `npx tsc --noEmit`, `npm run build` | Clean; 9 routes exported |
+| 4 | `alembic check` | No new upgrade operations detected |
+| 5 | Synthetic month generation | 43,200 minute buckets, 5 incidents, 900 excerpt frames in 12.3 s; re-run returned **cached in 0.066 s** with the same run id |
+| 6 | Window validation over HTTP | future month **422**, monthly not starting on day 1 **422**, unknown source **422** |
+| 7 | Dataset separation over HTTP | SYNTHETIC June returned the month; LIVE June returned `run_count: 0`. No parameter combines datasets |
+| 8 | Distinct counting | 5 incidents carrying 14 timeline events reported as `distinct_count: 5`; a stored test incident of 8 hours with 20 events reports **1** |
+| 9 | Hidden truth | **0 hits** for all nine forbidden field names across every history, tool and analysis response; `analysis/` has no import of `simulation.truth` and never selects `private_checkpoint` |
+| 10 | Investigator isolation | `analysis/` imports nothing from `operations`, `api` or the runner, so no AI path can reach command execution |
+| 11 | Provider configuration | `AI_ENABLED=false`, provider and model blank, `LLM_API_KEY` length 0 — **a real provider call has never been made**, as the Phase 7 entry states |
+
+### Defects found, and their evidence
+
+| Defect | How it was observed | Status |
+|---|---|---|
+| `GET /history/summary` and `POST /history/review` were not role-scoped | Signed in as `flight` and as `master`, requested the same window: responses were **byte-for-byte identical**, including a recurrence row naming `ACTUATOR_MISMATCH` on `OPTIONAL_A`, a power entity | **Fixed** |
+| An AI-path failure could disturb the live loop | By inspection: `_enqueue_incident_change` ran synchronously on the event loop and was unguarded, while every neighbouring database call in `process_frame` used `await asyncio.to_thread(...)`; `enqueue_incident` both blocks on I/O and raises | **Fixed** |
+| Investigation dedup never caches a live incident | Two manual investigations 3 s apart produced two analyses (`cached: false`) at evidence revisions 1 and 5; the incident reached revision **38 in about 40 s** because the revision increments per persisted sample | **Open** — recorded in `docs/decisions.md`; bounded by the daily budget and the automatic cooldown, so it wastes work rather than exhausting spend |
+
+### Verification of the two fixes
+
+| # | Check | Result |
+|---|---|---|
+| 12 | Full backend suite after the fixes | **116 passed**, 108.02 s (4 new tests) |
+| 13 | Lint, types, export, schema drift after the fixes | `ruff check app tests ../scripts` passed; `tsc --noEmit` clean; `npm run build` exported 9 routes; `alembic check` clean |
+| 14 | History scoping, live | `master` → `distinct_count: 5`, `hidden_from_this_role: 0`. `flight` → `distinct_count: 0`, `hidden_from_this_role: 5`, empty recurrence, and `OPTIONAL_A` absent from the response text. Coverage identical for both, because minute coverage describes the dataset rather than a subsystem |
+| 15 | Scoping in both directions, focused test | `power` → 2 visible, 1 hidden; `flight` → 1 visible, 2 hidden; `master` → 3 visible, 0 hidden, from one fixture holding two power incidents and one flight incident |
+| 16 | Period review scoping, live | Master generated a review; `flight` fetching it received **403**, master **200**. Flight's own review was a **separate** record reporting `0 distinct incidents` and stating "Scoped to the FLIGHT_SYSTEMS account; 5 incidents in this window belong to other subsystems and are not counted here" |
+| 17 | Enqueue is off the event loop, focused test | The enqueue executes on a different thread id than the running loop |
+| 18 | Enqueue failure is contained, focused test | An analysis service that raises on every call: no exception escapes `process_frame`, and all three triggers are still attempted |
+| 19 | Live loop during investigations | Run remained `RUNNING` and reached `frame_seq` 50 while investigations were queued and completed; server log contains no enqueue failure and no traceback |
+| 20 | Final port/storage state | ports **3000, 8000 and 8011 free**; `ps01-db-1` healthy on 5432; no `docker compose down`, and the `ps01_pgdata` volume was never touched |
+
+### Not verified
+
+A real LLM call still has not been made, because no authorized provider key or model is
+configured. `LLM` mode remains unvalidated; `TEMPLATE` is the only mode this machine has
+ever produced. Deployment remains unverified beyond the database container. The browser UI
+was not re-inspected during this review; the export build and the type check passed.
+
+---
+
 ## Phase 7 — bounded live investigator and periodic reviews
 
 **Date:** 2026-09-23
