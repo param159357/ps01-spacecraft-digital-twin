@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="", alias="LLM_PROVIDER")
     llm_model: str = Field(default="", alias="LLM_MODEL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     llm_timeout_seconds: int = Field(default=20, alias="LLM_TIMEOUT_SECONDS")
     llm_daily_call_limit: int = Field(default=30, alias="LLM_DAILY_CALL_LIMIT")
     llm_max_output_tokens: int = Field(default=1200, alias="LLM_MAX_OUTPUT_TOKENS")

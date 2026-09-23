@@ -18,7 +18,7 @@ from app.analysis.contracts import (
     validate_citations,
 )
 from app.analysis.history import history_window_key, render_period_review
-from app.analysis.provider import OpenAIProvider
+from app.analysis.provider import GeminiProvider, OpenAIProvider
 from app.analysis.tools import InvestigatorToolbox, collect_evidence_ids
 from app.config.loader import VehicleConfiguration
 from app.config.settings import Settings
@@ -250,7 +250,7 @@ class AnalysisService:
         mode = "TEMPLATE"
         reason: str | None = None
         usage: dict[str, Any] = {"provider": None, "model": None, "attempts": 0}
-        provider: OpenAIProvider | None = None
+        provider: OpenAIProvider | GeminiProvider | None = None
         try:
             if not self._provider_ready():
                 reason = "PROVIDER_NOT_CONFIGURED"
@@ -259,7 +259,7 @@ class AnalysisService:
                 reason = "DAILY_BUDGET_EXHAUSTED"
                 output, trail = await asyncio.to_thread(self._template, job.incident_id)
             else:
-                provider = OpenAIProvider(self.settings)
+                provider = self._new_provider()
                 with session_scope() as db:
                     incident = db.get(IncidentRow, job.incident_id)
                     if incident is None:
@@ -325,12 +325,20 @@ class AnalysisService:
                 row.completed_at = datetime.now(UTC)
 
     def _provider_ready(self) -> bool:
-        return bool(
-            self.settings.ai_enabled
-            and self.settings.llm_provider.lower() == "openai"
-            and self.settings.llm_model
-            and self.settings.llm_api_key
+        provider = self.settings.llm_provider.lower()
+        credential = (
+            self.settings.llm_api_key
+            if provider == "openai"
+            else self.settings.gemini_api_key
+            if provider == "gemini"
+            else ""
         )
+        return bool(self.settings.ai_enabled and self.settings.llm_model and credential)
+
+    def _new_provider(self) -> OpenAIProvider | GeminiProvider:
+        if self.settings.llm_provider.lower() == "gemini":
+            return GeminiProvider(self.settings)
+        return OpenAIProvider(self.settings)
 
     def _budget_available(self) -> bool:
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -385,7 +393,7 @@ class AnalysisService:
         mode = "TEMPLATE"
         reason: str | None = None
         usage: dict[str, Any] = {"provider": None, "model": None, "attempts": 0}
-        provider: OpenAIProvider | None = None
+        provider: OpenAIProvider | GeminiProvider | None = None
         result: dict[str, Any]
         try:
             if not self._provider_ready():
@@ -395,7 +403,7 @@ class AnalysisService:
                 reason = "DAILY_BUDGET_EXHAUSTED"
                 result = render_period_review(job.summary)
             else:
-                provider = OpenAIProvider(self.settings)
+                provider = self._new_provider()
                 review, provider_usage, attempts = await provider.review(job.summary)
                 result = review.model_dump(mode="json")
                 mode = "LLM"

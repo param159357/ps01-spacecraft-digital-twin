@@ -313,8 +313,15 @@ class OperationalService:
                 row.acknowledged = i.acknowledgement.acknowledged
                 row.acknowledged_by = i.acknowledgement.acknowledged_by
                 row.acknowledged_at_utc = i.acknowledgement.acknowledged_at_utc
-                row.evidence_revision += 1
                 evidence_ids = [item.evidence_id for item in i.observed_evidence[-3:]]
+                if (
+                    old_severity != i.severity.value
+                    or old_lifecycle != i.lifecycle.value
+                    or old_acknowledged != i.acknowledgement.acknowledged
+                ):
+                    # Revision drives provider deduplication, so advance it only for a
+                    # meaningful incident transition rather than every telemetry sample.
+                    row.evidence_revision += 1
                 if old_severity != i.severity.value:
                     rank = {"UNKNOWN": 0, "INFO": 1, "WARNING": 2, "CRITICAL": 3}
                     if rank.get(i.severity.value, 0) > rank.get(old_severity, 0):
