@@ -20,7 +20,7 @@ from app.forecasts.engine import forecast
 from app.forecasts.estimator import ObservedStateEstimate, estimate_observed_state
 from app.monitoring.engine import IncidentEngine
 from app.storage.db import session_scope
-from app.storage.models import CommandRow, ForecastRow, IncidentRow
+from app.storage.models import CommandRow, ForecastRow, IncidentEventRow, IncidentRow
 
 
 class OperationalService:
@@ -273,7 +273,25 @@ class OperationalService:
                     evidence=payload,
                 )
                 db.add(row)
+                # The event model has only the scalar foreign key (no ORM relationship),
+                # so establish the parent row before its first timeline entry.
+                db.flush()
+                event = i.timeline[0] if i.timeline else None
+                db.add(
+                    IncidentEventRow(
+                        incident_id=i.id,
+                        at_utc=event.at_utc if event else i.first_seen_utc,
+                        kind=event.kind if event else "OPENED",
+                        detail=event.detail if event else f"{i.rule_id} incident opened.",
+                        severity=i.severity.value,
+                        lifecycle=i.lifecycle.value,
+                        evidence_ids=list(event.evidence_ids) if event else [],
+                    )
+                )
             else:
+                old_severity = row.severity
+                old_lifecycle = row.lifecycle
+                old_acknowledged = row.acknowledged
                 row.severity, row.lifecycle, row.last_seen_utc, row.evidence = (
                     i.severity.value,
                     i.lifecycle.value,
@@ -284,6 +302,46 @@ class OperationalService:
                 row.acknowledged_by = i.acknowledgement.acknowledged_by
                 row.acknowledged_at_utc = i.acknowledgement.acknowledged_at_utc
                 row.evidence_revision += 1
+                evidence_ids = [item.evidence_id for item in i.observed_evidence[-3:]]
+                if old_severity != i.severity.value:
+                    db.add(
+                        IncidentEventRow(
+                            incident_id=i.id,
+                            at_utc=i.last_seen_utc,
+                            kind="SEVERITY_CHANGED",
+                            detail=f"Severity changed from {old_severity} to {i.severity.value}.",
+                            severity=i.severity.value,
+                            lifecycle=i.lifecycle.value,
+                            evidence_ids=evidence_ids,
+                        )
+                    )
+                if old_lifecycle != i.lifecycle.value:
+                    db.add(
+                        IncidentEventRow(
+                            incident_id=i.id,
+                            at_utc=i.last_seen_utc,
+                            kind="LIFECYCLE_CHANGED",
+                            detail=(
+                                f"Lifecycle changed from {old_lifecycle} "
+                                f"to {i.lifecycle.value}."
+                            ),
+                            severity=i.severity.value,
+                            lifecycle=i.lifecycle.value,
+                            evidence_ids=evidence_ids,
+                        )
+                    )
+                if not old_acknowledged and i.acknowledgement.acknowledged:
+                    db.add(
+                        IncidentEventRow(
+                            incident_id=i.id,
+                            at_utc=i.acknowledgement.acknowledged_at_utc or i.last_seen_utc,
+                            kind="ACKNOWLEDGED",
+                            detail=f"Acknowledged by {i.acknowledgement.acknowledged_by}.",
+                            severity=i.severity.value,
+                            lifecycle=i.lifecycle.value,
+                            evidence_ids=evidence_ids,
+                        )
+                    )
 
     def _persist_forecast(self, f: Any) -> None:
         with session_scope() as db:
@@ -309,6 +367,8 @@ class OperationalService:
     def _persist_command(self, c: CommandRecord) -> None:
         with session_scope() as db:
             row = db.get(CommandRow, c.id)
+            previous_status = row.status if row else None
+            previous_outcome = row.observed_outcome if row else None
             if row is None:
                 row = CommandRow(
                     id=c.id,
@@ -334,3 +394,34 @@ class OperationalService:
                     c.observed_outcome.value,
                     c.outcome_detail,
                 )
+            proposal = self.proposals.get(c.proposal_id) if c.proposal_id else None
+            if proposal and proposal.incident_id:
+                evidence_ids = [f"command:{c.id}"]
+                if previous_status != c.status.value:
+                    db.add(
+                        IncidentEventRow(
+                            incident_id=proposal.incident_id,
+                            at_utc=c.applied_at_utc or c.created_at_utc,
+                            kind="COMMAND_STATUS",
+                            detail=f"{c.action_id} command status is {c.status.value}.",
+                            lifecycle=None,
+                            severity=None,
+                            evidence_ids=evidence_ids,
+                        )
+                    )
+                if (
+                    previous_outcome != c.observed_outcome.value
+                    and c.observed_outcome.value != "PENDING_OBSERVATION"
+                ):
+                    db.add(
+                        IncidentEventRow(
+                            incident_id=proposal.incident_id,
+                            at_utc=datetime.now(UTC),
+                            kind="COMMAND_OUTCOME",
+                            detail=c.outcome_detail
+                            or f"{c.action_id} outcome is {c.observed_outcome.value}.",
+                            lifecycle=None,
+                            severity=None,
+                            evidence_ids=evidence_ids,
+                        )
+                    )

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api import auth_routes, live, operations, pending, simulator, system
+from app.api import auth_routes, history, live, operations, pending, simulator, system
 from app.config.loader import load_configuration
 from app.config.settings import get_settings
 from app.operations import OperationalService
@@ -104,4 +104,5 @@ app.include_router(auth_routes.router, prefix="/api")
 app.include_router(live.router, prefix="/api")
 app.include_router(simulator.router, prefix="/api")
 app.include_router(operations.router, prefix="/api")
+app.include_router(history.router, prefix="/api")
 app.include_router(pending.router, prefix="/api")

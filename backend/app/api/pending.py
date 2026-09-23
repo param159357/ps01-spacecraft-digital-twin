@@ -41,19 +41,9 @@ def investigate_incident(incident_id: UUID) -> None:
 # ------------------------------------------------------------- forecasts and commands
 
 
-# -------------------------------------------------------------- analysis and history
+# -------------------------------------------------------------- analysis
 
 
 @router.get("/analyses/{analysis_id}", dependencies=_OPERATIONAL)
 def get_analysis(analysis_id: UUID) -> None:
     raise not_implemented(7, "Analysis results")
-
-
-@router.get("/history/summary", dependencies=_OPERATIONAL)
-def history_summary() -> None:
-    raise not_implemented(6, "Historical summaries")
-
-
-@router.post("/history/review", dependencies=_OPERATIONAL_MUTATION)
-def history_review() -> None:
-    raise not_implemented(6, "Period review generation")

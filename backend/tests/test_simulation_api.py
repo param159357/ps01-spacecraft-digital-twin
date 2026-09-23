@@ -15,7 +15,15 @@ from app.contracts.common import Role
 from tests.conftest import csrf_headers, login, logout
 
 # Hidden simulator fields. None of these may ever appear in an operational payload.
-HIDDEN_FIELDS = ("generation_factor", "extra_load_w", "heater_stuck_on", "contact_loss")
+HIDDEN_FIELDS = (
+    "generation_factor",
+    "extra_load_w",
+    "heater_stuck_on",
+    "contact_loss",
+    "computer_resets",
+    "branch_stuck_on",
+    "isolator_failed",
+)
 
 
 def _start_run(client) -> dict:
@@ -141,7 +149,11 @@ def test_operational_responses_never_carry_hidden_truth(client, clean_runs):
 
     for username in ("master", "power", "thermal", "flight"):
         login(client, username)
-        for path in ("/api/runs/current", "/api/telemetry?limit=5"):
+        for path in (
+            "/api/runs/current",
+            "/api/telemetry?limit=5",
+            "/api/history/summary?source=LIVE&period=monthly&start=2020-01-01",
+        ):
             raw = client.get(path).text
             for field in HIDDEN_FIELDS:
                 assert field not in raw, f"{field} leaked to {username} via {path}"
