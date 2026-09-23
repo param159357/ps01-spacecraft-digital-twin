@@ -2,6 +2,7 @@
 
 import { AppShell, headerFromLive } from "@/components/AppShell";
 import { IncidentPanel } from "@/components/IncidentPanel";
+import { IncidentAlerts } from "@/components/IncidentAlerts";
 import { LiveChart } from "@/components/LiveChart";
 import { Panel, StatusBadge } from "@/components/primitives";
 import { ChannelReadout, ChannelTableRow, useChannelMeta } from "@/components/telemetry";
@@ -31,6 +32,7 @@ export default function FlightConsole() {
 
   return (
     <AppShell role="FLIGHT_SYSTEMS" runState={headerFromLive(live)}>
+      <IncidentAlerts />
       <div className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
@@ -151,7 +153,7 @@ export default function FlightConsole() {
             </div>
           </Panel>
 
-          <IncidentPanel subsystemLabel="Flight systems" />
+          <div id="incident-panel"><IncidentPanel subsystemLabel="Flight systems" /></div>
         </div>
 
         <div className="grid gap-4 xl:grid-cols-3">
