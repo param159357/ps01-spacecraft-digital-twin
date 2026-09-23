@@ -258,9 +258,7 @@ class AnalysisRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        CheckConstraint(
-            "generation_mode IN ('LLM','TEMPLATE','REPLAY')", name="ck_analyses_mode"
-        ),
+        CheckConstraint("generation_mode IN ('LLM','TEMPLATE','REPLAY')", name="ck_analyses_mode"),
         # Analysis cache key: one result per incident + evidence revision.
         Index("ix_analyses_cache", "incident_id", "evidence_revision"),
         Index("ix_analyses_window", "window_key"),

@@ -179,8 +179,8 @@ def step_electrical(
     )
 
     delta_wh = (
-        power.eta_charge * charge_bus_w - discharge_bus_w / power.eta_discharge
-    ) * dt_s / 3600.0
+        (power.eta_charge * charge_bus_w - discharge_bus_w / power.eta_discharge) * dt_s / 3600.0
+    )
     next_energy_wh = min(power.battery_capacity_wh, max(0.0, energy_wh + delta_wh))
     if abs(next_energy_wh - energy_wh) < _ROUNDING_WH:
         next_energy_wh = energy_wh

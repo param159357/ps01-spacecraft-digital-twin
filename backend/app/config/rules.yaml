@@ -6,7 +6,7 @@
 #
 # All thresholds are starting test values for a fictional vehicle, not flight limits.
 
-config_version: "rules-0.1.0"
+config_version: "rules-0.2.0"
 
 defaults:
   healthy_dwell_s: 10.0        # missing data must never satisfy healthy dwell
@@ -17,7 +17,7 @@ rules:
     family: DATA_AVAILABILITY
     severity_default: WARNING
     subsystem: FLIGHT
-    implemented: false
+    implemented: true
     phase: 3
     description: No valid frame during expected contact. Preserves last-known values.
     params:
@@ -29,7 +29,7 @@ rules:
     family: POWER_GENERATION
     severity_default: WARNING
     subsystem: POWER
-    implemented: false
+    implemented: true
     phase: 3
     description: >
       Sunlit generation below expectation while demand or charge headroom exists and the
@@ -44,7 +44,7 @@ rules:
     family: POWER_ENERGY
     severity_default: WARNING
     subsystem: POWER
-    implemented: false
+    implemented: true
     phase: 3
     description: Observed or forecast state of charge crosses a configured reserve.
     params:
@@ -56,7 +56,7 @@ rules:
     family: THERMAL
     severity_default: WARNING
     subsystem: THERMAL_PROPULSION
-    implemented: false
+    implemented: true
     phase: 3
     description: Valid node temperature persists beyond its own configured operating limits.
     params:
@@ -80,7 +80,7 @@ rules:
     family: POWER_SUPPLY
     severity_default: CRITICAL
     subsystem: POWER
-    implemented: false
+    implemented: true
     phase: 3
     description: >
       Bus deviation or unmet demand with corroborating current or load evidence. The fast

@@ -33,6 +33,8 @@ class RunCommand(BaseModel):
     operation: RunOperation
     # A reset may pick a seed so a scenario replays identically.
     seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
+    initial_soc_percent: float | None = Field(default=None, ge=5.0, le=95.0)
+    initial_sim_time_s: float | None = Field(default=None, ge=0.0, lt=5400.0)
 
 
 @router.post("/run", dependencies=[Depends(require_simulator), Depends(require_csrf)])
@@ -45,7 +47,11 @@ async def run_control(
             return await runner.start()
         if command.operation is RunOperation.PAUSE:
             return await runner.pause()
-        return await runner.reset(seed=command.seed)
+        return await runner.reset(
+            seed=command.seed,
+            initial_soc_percent=command.initial_soc_percent,
+            initial_sim_time_s=command.initial_sim_time_s,
+        )
     except RunnerError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

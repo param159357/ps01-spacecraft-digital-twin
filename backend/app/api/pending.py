@@ -33,48 +33,12 @@ _OPERATIONAL_MUTATION = [Depends(require_operational), Depends(require_csrf)]
 # ------------------------------------------------------------------------- incidents
 
 
-@router.get("/incidents", dependencies=_OPERATIONAL)
-def list_incidents() -> None:
-    raise not_implemented(3, "The incident list")
-
-
-@router.get("/incidents/{incident_id}", dependencies=_OPERATIONAL)
-def get_incident(incident_id: UUID) -> None:
-    raise not_implemented(3, "Incident detail and evidence")
-
-
-@router.post("/incidents/{incident_id}/acknowledge", dependencies=_OPERATIONAL_MUTATION)
-def acknowledge_incident(incident_id: UUID) -> None:
-    raise not_implemented(3, "Incident acknowledgement")
-
-
-@router.post("/incidents/{incident_id}/compare", dependencies=_OPERATIONAL_MUTATION)
-def compare_actions(incident_id: UUID) -> None:
-    raise not_implemented(3, "Baseline and action comparison")
-
-
 @router.post("/incidents/{incident_id}/investigate", dependencies=_OPERATIONAL_MUTATION)
 def investigate_incident(incident_id: UUID) -> None:
     raise not_implemented(7, "Bounded AI investigation")
 
 
 # ------------------------------------------------------------- forecasts and commands
-
-
-@router.get("/forecasts/latest", dependencies=_OPERATIONAL)
-def latest_forecast() -> None:
-    raise not_implemented(3, "The latest forecast")
-
-
-@router.post("/commands", dependencies=_MASTER_MUTATION)
-def submit_command() -> None:
-    """Master only. A specialist attempting recovery is refused here with 403."""
-    raise not_implemented(3, "Recovery command execution")
-
-
-@router.get("/commands/{command_id}", dependencies=_OPERATIONAL)
-def get_command(command_id: UUID) -> None:
-    raise not_implemented(3, "Command status and outcome")
 
 
 # -------------------------------------------------------------- analysis and history

@@ -100,10 +100,16 @@ def test_thermal_limits_are_not_copied_between_nodes(config):
 
 
 def test_rules_and_actions_report_honest_coverage(config):
-    """Nothing may claim to be implemented before its phase builds it."""
+    """Coverage exposes only rules/actions with Phase 3 implementations and tests."""
     assert len(config.rules.rules) == 10
-    assert config.rules.implemented_ids == ()
-    assert config.actions.enabled_ids == ()
+    assert config.rules.implemented_ids == (
+        "DATA_STALE",
+        "GENERATION_SHORTFALL",
+        "ENERGY_RESERVE",
+        "THERMAL_LIMIT",
+        "SUPPLY_SHORTAGE",
+    )
+    assert config.actions.enabled_ids == ("REDUCE_PAYLOAD_POWER",)
 
     core_demo_actions = {"REDUCE_PAYLOAD_POWER", "ISOLATE_OPTIONAL_BRANCH"}
     assert core_demo_actions <= {a.id for a in config.actions.actions}

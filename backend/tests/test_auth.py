@@ -26,9 +26,7 @@ def test_missing_session_returns_401(client):
 
 
 def test_invalid_credentials_return_401_without_revealing_the_account(client):
-    unknown = client.post(
-        "/api/auth/login", json={"username": "nobody", "password": "whatever"}
-    )
+    unknown = client.post("/api/auth/login", json={"username": "nobody", "password": "whatever"})
     wrong = client.post("/api/auth/login", json={"username": "master", "password": "wrong"})
 
     assert unknown.status_code == 401
@@ -108,15 +106,11 @@ def test_specialist_cannot_execute_a_recovery_command(client):
         client.post("/api/auth/logout", headers=csrf_headers(client))
 
 
-def test_master_reaches_the_command_endpoint_and_is_told_it_is_unbuilt(client):
-    """The master passes authorization, then gets an honest 503 rather than a fake
-    success — the endpoint exists but Phase 3 implements it."""
+def test_master_reaches_the_built_command_endpoint(client):
+    """The master passes authorization into Phase 3 request validation."""
     login(client, "master")
     response = client.post("/api/commands", json={}, headers=csrf_headers(client))
-    assert response.status_code == 503
-    body = response.json()
-    assert body["error"] == "NOT_IMPLEMENTED_YET"
-    assert body["phase"] == 3
+    assert response.status_code == 422
 
 
 def test_operational_roles_cannot_read_simulator_truth(client):
@@ -189,11 +183,19 @@ def test_channel_visibility_is_filtered_by_role(client):
     assert "wheel_speed" not in power_channels
 
 
-def test_coverage_reports_nothing_as_implemented_yet(client):
+def test_coverage_reports_phase3_implementation(client):
     login(client, "master")
     body = client.get("/api/config/coverage").json()
-    assert all(rule["implemented"] is False for rule in body["rules"])
-    assert all(action["enabled"] is False for action in body["actions"])
+    assert {rule["id"] for rule in body["rules"] if rule["implemented"]} == {
+        "DATA_STALE",
+        "GENERATION_SHORTFALL",
+        "ENERGY_RESERVE",
+        "THERMAL_LIMIT",
+        "SUPPLY_SHORTAGE",
+    }
+    assert {action["id"] for action in body["actions"] if action["enabled"]} == {
+        "REDUCE_PAYLOAD_POWER"
+    }
     assert body["executable_by_this_role"] is True
 
 

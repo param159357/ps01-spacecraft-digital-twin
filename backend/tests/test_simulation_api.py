@@ -85,9 +85,12 @@ def test_pause_stops_advancing_and_start_resumes(client, clean_runs):
     _start_run(client)
     _wait_for_frames(client)
 
-    assert client.post(
-        "/api/simulator/run", json={"operation": "PAUSE"}, headers=csrf_headers(client)
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/simulator/run", json={"operation": "PAUSE"}, headers=csrf_headers(client)
+        ).status_code
+        == 200
+    )
 
     time.sleep(1.5)
     paused_at = client.get("/api/runs/current").json()["run"]["frame_seq"]
@@ -332,6 +335,7 @@ def test_stream_requires_a_session(client, clean_runs):
 
 
 # ------------------------------------------------------------------ contact loss
+
 
 def test_injected_contact_loss_stops_delivery_without_pausing_the_run(client, clean_runs):
     """A simulated contact loss leaves the app connected while readings go stale — a

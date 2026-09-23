@@ -4,8 +4,8 @@
 # assumption chosen to make the demonstration reproducible and independently
 # testable. None of it is sourced from NASA, ISRO or any real spacecraft.
 
-config_version: "spacecraft-0.2.0"
-model_version: "twin-0.2.0"
+config_version: "spacecraft-0.3.0"
+model_version: "twin-0.3.0"
 vehicle_name: "PS01 Demonstration Vehicle"
 
 power:

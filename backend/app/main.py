@@ -17,9 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api import auth_routes, live, pending, simulator, system
+from app.api import auth_routes, live, operations, pending, simulator, system
 from app.config.loader import load_configuration
 from app.config.settings import get_settings
+from app.operations import OperationalService
 from app.simulation.runner import SimulationRunner
 from app.storage.db import engine
 
@@ -56,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # This process owns the simulation. It recovers the last live run in a PAUSED state;
     # the simulator account resumes or resets it explicitly.
     runner = SimulationRunner(config, settings)
+    runner.operations = OperationalService(config, runner.bus)
     app.state.runner = runner
     await runner.startup()
 
@@ -101,4 +103,5 @@ app.include_router(system.router, prefix="/api")
 app.include_router(auth_routes.router, prefix="/api")
 app.include_router(live.router, prefix="/api")
 app.include_router(simulator.router, prefix="/api")
+app.include_router(operations.router, prefix="/api")
 app.include_router(pending.router, prefix="/api")

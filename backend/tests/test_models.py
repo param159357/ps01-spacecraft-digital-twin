@@ -58,15 +58,23 @@ def test_step_size_does_not_change_the_energy_result(power):
     load = LoadRequest(essential_w=100.0, payload_w=0.0, heater_w=0.0)
 
     single = models.step_electrical(
-        power=power, energy_wh=700.0, load=load, illumination_factor=0.0,
-        generation_factor=1.0, dt_s=1800.0,
+        power=power,
+        energy_wh=700.0,
+        load=load,
+        illumination_factor=0.0,
+        generation_factor=1.0,
+        dt_s=1800.0,
     ).next_energy_wh
 
     stepped = 700.0
     for _ in range(1800):
         stepped = models.step_electrical(
-            power=power, energy_wh=stepped, load=load, illumination_factor=0.0,
-            generation_factor=1.0, dt_s=1.0,
+            power=power,
+            energy_wh=stepped,
+            load=load,
+            illumination_factor=0.0,
+            generation_factor=1.0,
+            dt_s=1.0,
         ).next_energy_wh
 
     assert math.isclose(single, stepped, rel_tol=1e-9)
@@ -79,8 +87,12 @@ def test_charging_respects_capacity_and_curtails(power):
     load = LoadRequest(essential_w=100.0, payload_w=0.0, heater_w=0.0)
 
     result = models.step_electrical(
-        power=power, energy_wh=full, load=load, illumination_factor=1.0,
-        generation_factor=1.0, dt_s=1.0,
+        power=power,
+        energy_wh=full,
+        load=load,
+        illumination_factor=1.0,
+        generation_factor=1.0,
+        dt_s=1.0,
     )
 
     assert result.next_energy_wh <= full + 1e-9
@@ -96,8 +108,12 @@ def test_empty_battery_sheds_optional_load_instead_of_pretending(power):
     load = LoadRequest(essential_w=100.0, payload_w=80.0, heater_w=30.0)
 
     result = models.step_electrical(
-        power=power, energy_wh=0.0, load=load, illumination_factor=0.0,
-        generation_factor=1.0, dt_s=1.0,
+        power=power,
+        energy_wh=0.0,
+        load=load,
+        illumination_factor=0.0,
+        generation_factor=1.0,
+        dt_s=1.0,
     )
 
     assert result.next_energy_wh == 0.0
@@ -113,8 +129,12 @@ def test_energy_never_goes_negative(power):
     load = LoadRequest(essential_w=400.0, payload_w=0.0, heater_w=0.0)
     for _ in range(60):
         energy = models.step_electrical(
-            power=power, energy_wh=energy, load=load, illumination_factor=0.0,
-            generation_factor=1.0, dt_s=1.0,
+            power=power,
+            energy_wh=energy,
+            load=load,
+            illumination_factor=0.0,
+            generation_factor=1.0,
+            dt_s=1.0,
         ).next_energy_wh
         assert energy >= 0.0
 
@@ -175,13 +195,21 @@ def test_explicit_integration_matches_the_analytic_step_response(config):
     steps = int(elapsed_s)
     for _ in range(steps):
         temperature = models.step_node(
-            node.heat_capacity_j_per_k, node.conductance_w_per_k,
-            temperature, boundary_c, heat_in_w, 1.0,
+            node.heat_capacity_j_per_k,
+            node.conductance_w_per_k,
+            temperature,
+            boundary_c,
+            heat_in_w,
+            1.0,
         )
 
     analytic = models.analytic_node_response(
-        node.heat_capacity_j_per_k, node.conductance_w_per_k,
-        node.initial_c, boundary_c, heat_in_w, elapsed_s,
+        node.heat_capacity_j_per_k,
+        node.conductance_w_per_k,
+        node.initial_c,
+        boundary_c,
+        heat_in_w,
+        elapsed_s,
     )
     assert temperature == pytest.approx(analytic, rel=1e-3)
 
@@ -193,8 +221,12 @@ def test_node_reaches_the_expected_equilibrium(config):
     temperature = node.initial_c
     for _ in range(40000):
         temperature = models.step_node(
-            node.heat_capacity_j_per_k, node.conductance_w_per_k,
-            temperature, boundary_c, heat_in_w, 1.0,
+            node.heat_capacity_j_per_k,
+            node.conductance_w_per_k,
+            temperature,
+            boundary_c,
+            heat_in_w,
+            1.0,
         )
     assert temperature == pytest.approx(boundary_c + heat_in_w / node.conductance_w_per_k, rel=1e-4)
 

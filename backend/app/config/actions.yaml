@@ -5,7 +5,7 @@
 # implementation or tests yet, so it MUST NOT be offered to an operator as an
 # available fix.
 
-config_version: "actions-0.1.0"
+config_version: "actions-0.2.0"
 
 defaults:
   proposal_ttl_s: 30           # section 9.3 suggested TTL
@@ -14,7 +14,7 @@ defaults:
 actions:
   - id: REDUCE_PAYLOAD_POWER
     label: Reduce payload duty
-    enabled: false
+    enabled: true
     phase: 3
     subsystem: POWER
     operation: Select an allowed payload duty level.

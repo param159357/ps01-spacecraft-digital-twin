@@ -30,7 +30,7 @@ class CrossingKind(str, Enum):
 
 
 class LimitCrossing(BaseModel):
-    """"Projected crossing in approximately X under these assumptions" — never a
+    """ "Projected crossing in approximately X under these assumptions" — never a
     fixed "failure at 18 minutes" claim."""
 
     model_config = ConfigDict(frozen=True)
@@ -69,9 +69,9 @@ class ForecastResult(BaseModel):
     limitations: tuple[str, ...] = ()
     series: tuple[ForecastSeries, ...] = ()
     crossings: tuple[LimitCrossing, ...] = ()
-    action_id: str | None = None          # None for the no-action baseline
+    action_id: str | None = None  # None for the no-action baseline
     action_arguments: dict[str, Any] = Field(default_factory=dict)
-    stale: bool = False                   # true when the source revision has moved on
+    stale: bool = False  # true when the source revision has moved on
 
 
 class ProposalStatus(str, Enum):

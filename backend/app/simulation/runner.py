@@ -71,6 +71,9 @@ class SimulationRunner:
 
         self._last_publish_monotonic: float | None = None
         self.storage_error: str | None = None
+        self.operations: Any | None = None
+        self._pending_commands: list[tuple[UUID, float]] = []
+        self._queued_command_ids: set[UUID] = set()
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -150,11 +153,24 @@ class SimulationRunner:
         self._publish_run_changed("paused")
         return self.run_metadata()
 
-    async def reset(self, seed: int | None = None) -> dict[str, Any]:
+    async def reset(
+        self,
+        seed: int | None = None,
+        initial_soc_percent: float | None = None,
+        initial_sim_time_s: float | None = None,
+    ) -> dict[str, Any]:
         """Start a brand-new run. Previous runs stay in the database untouched."""
         async with self._lock:
             previous = self.run_id
             await self._create_run_locked(InjectedConditions(), seed=seed)
+            if initial_soc_percent is not None:
+                self.truth.energy_wh = (
+                    self.config.spacecraft.power.battery_capacity_wh * initial_soc_percent / 100.0
+                )
+                await asyncio.to_thread(self._checkpoint, self.run_id, self.truth)
+            if initial_sim_time_s is not None:
+                self.truth.sim_time_s = initial_sim_time_s
+                await asyncio.to_thread(self._checkpoint, self.run_id, self.truth)
             self.status = RunStatus.PAUSED
         if previous is not None:
             await asyncio.to_thread(self._end_run, previous)
@@ -224,12 +240,21 @@ class SimulationRunner:
             if self.storage_error is not None:
                 return
 
+            applied_commands = self._pending_commands
+            self._pending_commands = []
+            for _, duty in applied_commands:
+                self.truth.conditions = ConditionUpdate(payload_duty_percent=duty).apply_to(
+                    self.truth.conditions
+                )
+                self.control_revision += 1
             self.truth, result = twin.step(self.config.spacecraft, self.truth, tick_s)
 
             # A simulated contact loss advances the vehicle but delivers nothing to the
             # ground. Clients keep their last values and watch them go stale — which is
             # a different thing from the app losing its connection.
             if self.truth.conditions.contact_loss:
+                if self.operations is not None:
+                    await self.operations.process_staleness(self.truth.sim_time_s)
                 return
 
             now = time.monotonic()
@@ -272,6 +297,23 @@ class SimulationRunner:
             self.latest_frame = frame
 
         self.bus.publish(StreamEventType.TELEMETRY, frame.model_dump(mode="json"), run_id)
+        if self.operations is not None:
+            for command_id, _ in applied_commands:
+                self._queued_command_ids.discard(command_id)
+                load = frame.value_if_valid("load_power")
+                self.operations.mark_applied(
+                    command_id,
+                    frame.tick_seq,
+                    float(load) if isinstance(load, (int, float)) else 0.0,
+                )
+            await self.operations.process_frame(frame)
+
+    async def queue_payload_command(self, command_id: UUID, duty_percent: float) -> None:
+        """Queue an accepted command for the next simulation tick boundary."""
+        async with self._lock:
+            if command_id not in self._queued_command_ids:
+                self._pending_commands.append((command_id, duty_percent))
+                self._queued_command_ids.add(command_id)
 
     async def _enter_storage_failure(self, message: str) -> None:
         async with self._lock:

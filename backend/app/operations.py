@@ -1,0 +1,297 @@
+"""Phase 3 coordinator: observed estimates, incidents, forecasts and recovery actions."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID, uuid4
+
+from app.config.loader import VehicleConfiguration
+from app.contracts.actions import (
+    ActionProposal,
+    CommandRecord,
+    CommandStatus,
+    RecoveryOutcome,
+)
+from app.contracts.incidents import Acknowledgement, Incident
+from app.contracts.telemetry import StreamEventType, TelemetryFrame
+from app.forecasts.engine import forecast
+from app.forecasts.estimator import ObservedStateEstimate, estimate_observed_state
+from app.monitoring.engine import IncidentEngine
+from app.storage.db import session_scope
+from app.storage.models import CommandRow, ForecastRow, IncidentRow
+
+
+class OperationalService:
+    def __init__(self, config: VehicleConfiguration, bus: Any) -> None:
+        self.config = config
+        self.bus = bus
+        self.incident_engine = IncidentEngine(config)
+        self.latest_estimate: ObservedStateEstimate | None = None
+        self.latest_forecast = None
+        self.proposals: dict[UUID, ActionProposal] = {}
+        self.commands: dict[UUID, CommandRecord] = {}
+        self._last_forecast_frame = 0
+        self._command_start_load: dict[UUID, tuple[int, float]] = {}
+        self._latest_frame: TelemetryFrame | None = None
+
+    async def process_staleness(self, sim_time_s: float) -> None:
+        if self._latest_frame is None:
+            return
+        age_s = max(0.0, sim_time_s - self._latest_frame.sim_time_s)
+        incident = self.incident_engine.evaluate_stale(
+            self._latest_frame.model_copy(update={"sim_time_s": sim_time_s}), age_s
+        )
+        if incident is not None:
+            await asyncio.to_thread(self._persist_incident, incident)
+            self.bus.publish(
+                StreamEventType.INCIDENT, incident.model_dump(mode="json"), incident.run_id
+            )
+
+    async def process_frame(self, frame: TelemetryFrame) -> None:
+        self._latest_frame = frame
+        estimate = estimate_observed_state(frame, self.config.spacecraft)
+        self.latest_estimate = estimate
+        if estimate and (
+            self.latest_forecast is None or frame.frame_seq - self._last_forecast_frame >= 5
+        ):
+            result = await asyncio.to_thread(forecast, estimate, self.config.spacecraft)
+            self.latest_forecast = result
+            self._last_forecast_frame = frame.frame_seq
+            await asyncio.to_thread(self._persist_forecast, result)
+            self.bus.publish(StreamEventType.FORECAST, result.model_dump(mode="json"), frame.run_id)
+        forecast_crossing = bool(self.latest_forecast and self.latest_forecast.crossings)
+        changed = self.incident_engine.evaluate(frame, forecast_crossing)
+        for incident in changed:
+            await asyncio.to_thread(self._persist_incident, incident)
+            self.bus.publish(
+                StreamEventType.INCIDENT, incident.model_dump(mode="json"), frame.run_id
+            )
+        await asyncio.to_thread(self._observe_command_outcomes, frame)
+
+    def list_incidents(self, run_id: UUID | None) -> list[Incident]:
+        return sorted(
+            (
+                i
+                for i in self.incident_engine.incidents.values()
+                if run_id is None or i.run_id == run_id
+            ),
+            key=lambda i: i.last_seen_utc,
+            reverse=True,
+        )
+
+    def acknowledge(self, incident_id: UUID, username: str) -> Incident:
+        incident = self.incident_engine.incidents[incident_id]
+        ack = Acknowledgement(
+            acknowledged=True, acknowledged_by=username, acknowledged_at_utc=datetime.now(UTC)
+        )
+        updated = incident.model_copy(update={"acknowledgement": ack})
+        self.incident_engine.incidents[incident_id] = updated
+        self._persist_incident(updated)
+        return updated
+
+    async def compare(self, incident_id: UUID, duty: float = 0.0) -> dict[str, Any]:
+        if incident_id not in self.incident_engine.incidents:
+            raise KeyError(incident_id)
+        estimate = self.latest_estimate
+        if estimate is None:
+            raise ValueError("No valid observed state is available for comparison.")
+        baseline, action = await asyncio.gather(
+            asyncio.to_thread(forecast, estimate, self.config.spacecraft),
+            asyncio.to_thread(
+                forecast, estimate, self.config.spacecraft, payload_duty_percent=duty
+            ),
+        )
+        await asyncio.to_thread(self._persist_forecast, baseline)
+        await asyncio.to_thread(self._persist_forecast, action)
+        now = datetime.now(UTC)
+        proposal = ActionProposal(
+            id=uuid4(),
+            run_id=estimate.run_id,
+            incident_id=incident_id,
+            action_id="REDUCE_PAYLOAD_POWER",
+            action_arguments={"duty_percent": duty},
+            evidence_frame_seq=estimate.frame_seq,
+            control_revision=estimate.control_revision,
+            created_at_utc=now,
+            expires_at_utc=now + timedelta(seconds=30),
+            baseline_forecast_id=baseline.id,
+            action_forecast_id=action.id,
+            input_validity={"battery_soc": (0.0, 100.0)},
+            outcome_paths=(
+                "Measured load falls after application.",
+                "Reserve projection improves or remains unchanged.",
+            ),
+            trade_off="Reducing payload duty delays configured mission work.",
+        )
+        self.proposals[proposal.id] = proposal
+        return {
+            "baseline": baseline.model_dump(mode="json"),
+            "action": action.model_dump(mode="json"),
+            "proposal": proposal.model_dump(mode="json"),
+        }
+
+    def accept_command(self, proposal_id: UUID, actor: str, idempotency_key: str) -> CommandRecord:
+        proposal = self.proposals.get(proposal_id)
+        if proposal is None:
+            raise KeyError(proposal_id)
+        existing = next(
+            (
+                c
+                for c in self.commands.values()
+                if c.run_id == proposal.run_id and c.idempotency_key == idempotency_key
+            ),
+            None,
+        )
+        if existing:
+            return existing
+        if proposal.expires_at_utc < datetime.now(UTC):
+            raise TimeoutError("The proposal has expired; compare again.")
+        estimate = self.latest_estimate
+        if (
+            estimate is None
+            or estimate.run_id != proposal.run_id
+            or estimate.control_revision != proposal.control_revision
+        ):
+            raise RuntimeError("The run controls changed; compare again before approval.")
+        record = CommandRecord(
+            id=uuid4(),
+            run_id=proposal.run_id,
+            proposal_id=proposal.id,
+            action_id=proposal.action_id,
+            action_arguments=proposal.action_arguments,
+            actor_username=actor,
+            idempotency_key=idempotency_key,
+            status=CommandStatus.ACCEPTED,
+            created_at_utc=datetime.now(UTC),
+        )
+        self.commands[record.id] = record
+        self._command_start_load[record.id] = (0, estimate.load_w)
+        self._persist_command(record)
+        return record
+
+    def mark_applied(self, command_id: UUID, tick_seq: int, load_w: float) -> None:
+        record = self.commands[command_id]
+        updated = record.model_copy(
+            update={
+                "status": CommandStatus.APPLIED,
+                "applied_at_utc": datetime.now(UTC),
+                "applied_tick_seq": tick_seq,
+            }
+        )
+        self.commands[command_id] = updated
+        _, before = self._command_start_load.get(command_id, (0, load_w))
+        self._command_start_load[command_id] = (tick_seq, before)
+        self._persist_command(updated)
+        self.bus.publish(StreamEventType.COMMAND, updated.model_dump(mode="json"), updated.run_id)
+
+    def _observe_command_outcomes(self, frame: TelemetryFrame) -> None:
+        load = frame.value_if_valid("load_power")
+        if not isinstance(load, (int, float)):
+            return
+        for cid, (tick, before) in list(self._command_start_load.items()):
+            if frame.tick_seq - tick < 3:
+                continue
+            record = self.commands[cid]
+            improved = float(load) < before - 10.0
+            updated = record.model_copy(
+                update={
+                    "observed_outcome": RecoveryOutcome.IMPROVED
+                    if improved
+                    else RecoveryOutcome.NO_CHANGE,
+                    "outcome_detail": (
+                        f"Observed requested load changed from {before:.1f} W "
+                        f"to {float(load):.1f} W."
+                    ),
+                }
+            )
+            self.commands[cid] = updated
+            self._persist_command(updated)
+            self.bus.publish(
+                StreamEventType.COMMAND, updated.model_dump(mode="json"), updated.run_id
+            )
+            del self._command_start_load[cid]
+
+    def _persist_incident(self, i: Incident) -> None:
+        payload = i.model_dump(mode="json")
+        with session_scope() as db:
+            row = db.get(IncidentRow, i.id)
+            if row is None:
+                row = IncidentRow(
+                    id=i.id,
+                    run_id=i.run_id,
+                    rule_id=i.rule_id,
+                    rule_version=i.rule_version,
+                    family=i.family,
+                    subsystem=i.subsystem.value,
+                    affected_entity=i.affected_entity,
+                    affected_groups=list(i.affected_groups),
+                    severity=i.severity.value,
+                    lifecycle=i.lifecycle.value,
+                    first_seen_utc=i.first_seen_utc,
+                    last_seen_utc=i.last_seen_utc,
+                    evidence=payload,
+                )
+                db.add(row)
+            else:
+                row.severity, row.lifecycle, row.last_seen_utc, row.evidence = (
+                    i.severity.value,
+                    i.lifecycle.value,
+                    i.last_seen_utc,
+                    payload,
+                )
+                row.acknowledged = i.acknowledgement.acknowledged
+                row.acknowledged_by = i.acknowledgement.acknowledged_by
+                row.acknowledged_at_utc = i.acknowledgement.acknowledged_at_utc
+                row.evidence_revision += 1
+
+    def _persist_forecast(self, f: Any) -> None:
+        with session_scope() as db:
+            db.add(
+                ForecastRow(
+                    id=f.id,
+                    run_id=f.run_id,
+                    source_frame_seq=f.source_frame_seq,
+                    source_sim_time_s=f.source_sim_time_s,
+                    generated_at_utc=f.generated_at_utc,
+                    model_version=f.model_version,
+                    config_version=f.config_version,
+                    horizon_s=f.horizon_s,
+                    coverage=f.coverage.value,
+                    action_id=f.action_id,
+                    action_arguments=f.action_arguments,
+                    assumptions=list(f.assumptions),
+                    series=[s.model_dump(mode="json") for s in f.series],
+                    crossings=[c.model_dump(mode="json") for c in f.crossings],
+                )
+            )
+
+    def _persist_command(self, c: CommandRecord) -> None:
+        with session_scope() as db:
+            row = db.get(CommandRow, c.id)
+            if row is None:
+                row = CommandRow(
+                    id=c.id,
+                    run_id=c.run_id,
+                    actor_username=c.actor_username,
+                    idempotency_key=c.idempotency_key,
+                    proposal_id=c.proposal_id,
+                    action_id=c.action_id,
+                    action_arguments=c.action_arguments,
+                    status=c.status.value,
+                    status_reason=c.status_reason,
+                    created_at=c.created_at_utc,
+                    observed_outcome=c.observed_outcome.value,
+                )
+                db.add(row)
+            else:
+                row.status, row.applied_at_utc, row.applied_tick_seq = (
+                    c.status.value,
+                    c.applied_at_utc,
+                    c.applied_tick_seq,
+                )
+                row.observed_outcome, row.outcome_detail = (
+                    c.observed_outcome.value,
+                    c.outcome_detail,
+                )

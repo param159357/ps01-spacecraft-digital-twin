@@ -97,9 +97,7 @@ def login(
             headers={"Retry-After": str(int(blocked_for) + 1)},
         )
 
-    user = db.execute(
-        select(User).where(User.username == payload.username)
-    ).scalar_one_or_none()
+    user = db.execute(select(User).where(User.username == payload.username)).scalar_one_or_none()
 
     # Identical response for unknown user, wrong password and deactivated account.
     if user is None or not user.active or not verify_password(user.password_hash, payload.password):
