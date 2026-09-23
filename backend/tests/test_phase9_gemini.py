@@ -11,7 +11,12 @@ import pytest
 from google.genai import types
 
 from app.analysis.contracts import InvestigationOutput, validate_citations
-from app.analysis.provider import GeminiProvider, ProviderError, _gemini_response_schema
+from app.analysis.provider import (
+    GeminiProvider,
+    ProviderError,
+    _gemini_history_schema,
+    _gemini_investigation_schema,
+)
 from app.config.settings import Settings
 
 
@@ -68,30 +73,49 @@ def _valid_output(evidence_id: str = "incident:abc") -> dict:
     }
 
 
-def _contains_key(value, target: str) -> bool:
-    if isinstance(value, dict):
-        return target in value or any(_contains_key(child, target) for child in value.values())
-    if isinstance(value, list):
-        return any(_contains_key(child, target) for child in value)
-    return False
+def _assert_minimal_schema(schema: dict) -> None:
+    assert set(schema) <= {"type", "properties", "required", "items"}
+    assert schema["type"] in {"object", "array", "string"}
+    if schema["type"] == "object":
+        assert set(schema["properties"]) == set(schema["required"])
+        for child in schema["properties"].values():
+            _assert_minimal_schema(child)
+    elif schema["type"] == "array":
+        _assert_minimal_schema(schema["items"])
 
 
-def test_gemini_schema_conversion_removes_nested_additional_properties_from_a_copy():
-    original = {
-        "additionalProperties": False,
-        "$defs": {
-            "Nested": {
-                "type": "object",
-                "additionalProperties": False,
-                "items": [{"additionalProperties": True, "type": "object"}],
-            }
-        },
+def _schema_keywords(schema: dict) -> set[str]:
+    keywords = set(schema)
+    if schema["type"] == "object":
+        for child in schema["properties"].values():
+            keywords.update(_schema_keywords(child))
+    elif schema["type"] == "array":
+        keywords.update(_schema_keywords(schema["items"]))
+    return keywords
+
+
+def test_gemini_schemas_are_fully_inlined_and_use_only_supported_keywords():
+    investigation = _gemini_investigation_schema()
+    history = _gemini_history_schema()
+
+    _assert_minimal_schema(investigation)
+    _assert_minimal_schema(history)
+    forbidden = {
+        "$defs",
+        "$ref",
+        "additionalProperties",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
     }
-
-    converted = _gemini_response_schema(original)
-
-    assert _contains_key(converted, "additionalProperties") is False
-    assert _contains_key(original, "additionalProperties") is True
+    encoded = json.dumps([investigation, history])
+    assert all(keyword not in encoded for keyword in forbidden)
+    # ``title`` remains the required HistoryReviewOutput field name, but is not metadata.
+    assert "title" not in _schema_keywords(investigation)
+    assert "title" not in _schema_keywords(history)
+    cited = investigation["properties"]["observations"]["items"]
+    assert set(cited["properties"]) == {"statement", "evidence_ids"}
 
 
 def test_gemini_converts_calls_continues_with_results_and_validates_output():
@@ -134,7 +158,8 @@ def test_gemini_converts_calls_continues_with_results_and_validates_output():
     }
     assert client.models.calls[1]["config"].response_mime_type == "application/json"
     investigation_schema = client.models.calls[1]["config"].response_json_schema
-    assert _contains_key(investigation_schema, "additionalProperties") is False
+    assert investigation_schema == _gemini_investigation_schema()
+    _assert_minimal_schema(investigation_schema)
     assert client.closed is True
 
 
@@ -159,7 +184,8 @@ def test_gemini_history_review_uses_the_compatible_schema():
     assert review.title == output["title"]
     assert attempts == 1
     history_schema = client.models.calls[0]["config"].response_json_schema
-    assert _contains_key(history_schema, "additionalProperties") is False
+    assert history_schema == _gemini_history_schema()
+    _assert_minimal_schema(history_schema)
     assert client.closed is True
 
 
@@ -173,7 +199,7 @@ def test_gemini_invalid_evidence_reference_is_rejected():
         )
 
 
-def test_gemini_provider_error_is_generic_and_does_not_disclose_secret():
+def test_gemini_provider_error_is_logged_safely_without_disclosing_secret(caplog):
     secret = "never-disclose-gemini-secret"
 
     class BrokenModels:
@@ -189,9 +215,15 @@ def test_gemini_provider_error_is_generic_and_does_not_disclose_secret():
         ),
         client=client,
     )
-    with pytest.raises(ProviderError) as caught:
-        asyncio.run(provider.review({"dataset": "SYNTHETIC"}))
+    with caplog.at_level("WARNING", logger="ps01.analysis.provider"):
+        with pytest.raises(ProviderError) as caught:
+            asyncio.run(provider.review({"dataset": "SYNTHETIC"}))
     assert secret not in str(caught.value)
+    assert secret not in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "transport included [REDACTED]" in caplog.text
+    assert "dataset" not in caplog.text
+    assert "SYNTHETIC" not in caplog.text
 
 
 def test_gemini_timeout_and_budget_readiness_degrade_before_provider_use(monkeypatch):

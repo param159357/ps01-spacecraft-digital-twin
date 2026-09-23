@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: a real Google Cloud deployment confirmed the authorized Gemini key/model and function-call turn, then exposed incompatible structured schemas and a wrong Caddy export mount. Provider-only recursive schema conversion and the `.next-export` mount are fixed; 132 backend tests, Ruff, TypeScript, export, Alembic and Compose validation pass. Earlier local SSE/restart/persistence evidence remains valid. | Redeploy the corrected commit; verify real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining deployed rehearsal. Physical five-laptop rehearsal remains pending. |
+| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: Google Cloud confirmed the authorized Gemini key/model, function calling and a small response schema, but the sanitized Pydantic schema still returned 400. Gemini now receives fully inlined minimal schemas while strict post-response validation remains intact; the `.next-export` mount is also fixed. 132 backend tests, Ruff, TypeScript, export, Alembic and Compose validation pass. | Redeploy the latest correction; verify real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining deployed rehearsal. Physical five-laptop rehearsal remains pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -926,26 +926,27 @@ Append compact session entries:
   locally validated; the corrected commit still needs hosted re-verification. Phase 10
   was not started.
 - Implemented/files changed:
-  - `backend/app/analysis/provider.py` — a Gemini-only recursive schema-copy conversion
-    removes every `additionalProperties` key before `response_json_schema`. Strict
-    Pydantic parsing, citation validation and action validation are unchanged.
-  - `backend/tests/test_phase9_gemini.py` — nested conversion plus incident and history
-    schema-path coverage.
+  - `backend/app/analysis/provider.py` — Gemini receives manual, fully inlined incident
+    and history schemas containing only `type`, `properties`, `required` and `items`.
+    Strict Pydantic parsing, citation validation and action validation are unchanged;
+    provider exception logging is bounded and credential-redacted.
+  - `backend/tests/test_phase9_gemini.py` — minimal-keyword and no-reference coverage for
+    both actual Gemini schema paths, plus safe provider-error logging.
   - `compose.yaml`, `frontend/package.json`, deployment docs — Caddy and the static serve
     command use the actual `frontend/.next-export` build directory, without a symlink.
-- Checks actually run and results: Gemini-focused **6 passed**; full backend **132 passed**
-  in 121.74 s with explicit disposable test settings; documented Ruff scope clean;
-  TypeScript clean; `npm run build` exported 9 routes and produced
-  `.next-export/index.html` (5,545 bytes); Alembic clean; Compose config validation exit 0
+- Checks actually run and results: Gemini-focused **6 passed** within full backend
+  **132 passed** in 78.55 s with explicit disposable test settings; documented Ruff
+  scope clean; TypeScript clean; `npm run build` exported 9 routes to `.next-export`;
+  Alembic clean; Compose config validation exit 0
   using an explicit empty env source and non-secret placeholder.
 - Deployment evidence supplied by the user: the authorized key and exact model
   `gemini-3.5-flash` pass basic generation and the first function-calling turn. Before
-  this fix, both incident and history structured-output turns returned HTTP 400 on
-  `additionalProperties`. A fresh server build produced `.next-export`, while Compose
-  mounted `out`.
-- Decisions/deviations: compatibility is handled only at the Gemini provider boundary;
-  the application schema is not weakened. The built directory is mounted directly and no
-  symlink is introduced.
+  the first fix, a small structured schema succeeded but the sanitized generated
+  `InvestigationOutput` schema still returned HTTP 400 `INVALID_ARGUMENT`. A fresh server
+  build produced `.next-export`, while Compose had mounted `out`.
+- Decisions/deviations: compatibility is handled only at the Gemini provider boundary
+  with minimal manual transport schemas; the application and OpenAI schemas are not
+  weakened. The built directory is mounted directly and no symlink is introduced.
 - Missing external checks: redeploy and verify one real structured incident investigation
   and one structured history review, then finish the hosted/public and rehearsal checks.
 - Known limitations: no post-fix live `generation_mode=LLM` result is claimed; physical

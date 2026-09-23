@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -15,6 +17,8 @@ from google.genai import types
 
 from app.analysis.contracts import HistoryReviewOutput, InvestigationOutput
 from app.config.settings import Settings
+
+logger = logging.getLogger("ps01.analysis.provider")
 
 
 class ProviderError(RuntimeError):
@@ -55,23 +59,62 @@ def _output_schema() -> dict[str, Any]:
     return InvestigationOutput.model_json_schema()
 
 
-def _gemini_response_schema(value: Any) -> Any:
-    """Return a Gemini-compatible copy without weakening local validation.
+def _gemini_investigation_schema() -> dict[str, Any]:
+    """Minimal inline schema accepted by Gemini; strictness remains post-response."""
+    cited_statement = {
+        "type": "object",
+        "properties": {
+            "statement": {"type": "string"},
+            "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["statement", "evidence_ids"],
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "observations": {"type": "array", "items": cited_statement},
+            "hypotheses": {"type": "array", "items": cited_statement},
+            "missing_evidence": {"type": "array", "items": {"type": "string"}},
+            "supported_action_ids": {"type": "array", "items": {"type": "string"}},
+            "next_checks": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "observations",
+            "hypotheses",
+            "missing_evidence",
+            "supported_action_ids",
+            "next_checks",
+        ],
+    }
 
-    Pydantic emits ``additionalProperties`` at the root and inside ``$defs`` for our
-    ``extra='forbid'`` models. Gemini rejects that keyword in ``response_json_schema``.
-    The provider receives a recursively filtered copy; Pydantic still validates the
-    response against the original strict models afterwards.
-    """
-    if isinstance(value, dict):
-        return {
-            key: _gemini_response_schema(child)
-            for key, child in value.items()
-            if key != "additionalProperties"
-        }
-    if isinstance(value, list):
-        return [_gemini_response_schema(child) for child in value]
-    return value
+
+def _gemini_history_schema() -> dict[str, Any]:
+    """Minimal inline history schema accepted by Gemini."""
+    return {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "findings": {"type": "array", "items": {"type": "string"}},
+            "limitations": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["title", "findings", "limitations"],
+    }
+
+
+_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)\b(api[_ -]?key|authorization|bearer)\b(\s*[=:]\s*|\s+)([^\s,;}\]]+)"
+)
+
+
+def _safe_provider_message(exc: Exception, settings: Settings) -> str:
+    """Bound and redact provider diagnostics without logging request content."""
+    raw = getattr(exc, "message", None) or str(exc) or "no message"
+    message = " ".join(str(raw).split())
+    for secret in (settings.gemini_api_key, settings.llm_api_key):
+        if secret:
+            message = message.replace(secret, "[REDACTED]")
+    message = _CREDENTIAL_PATTERN.sub(r"\1=[REDACTED]", message)
+    return message[:500]
 
 
 class OpenAIProvider:
@@ -292,7 +335,7 @@ class GeminiProvider:
                     "present in the supplied tool results and only configured action IDs."
                 ),
                 response_mime_type="application/json",
-                response_json_schema=_gemini_response_schema(_output_schema()),
+                response_json_schema=_gemini_investigation_schema(),
                 max_output_tokens=self.settings.llm_max_output_tokens,
             )
             second = await self._request(
@@ -319,9 +362,7 @@ class GeminiProvider:
                     "numbers exactly, distinguish missing coverage, and do not infer hidden causes."
                 ),
                 response_mime_type="application/json",
-                response_json_schema=_gemini_response_schema(
-                    HistoryReviewOutput.model_json_schema()
-                ),
+                response_json_schema=_gemini_history_schema(),
                 max_output_tokens=self.settings.llm_max_output_tokens,
             )
             response = await self._request(json.dumps(summary), config)
@@ -358,8 +399,20 @@ class GeminiProvider:
                 )
             except TimeoutError as exc:
                 last = exc
+                logger.warning(
+                    "Gemini provider attempt %d failed with %s: %s",
+                    self.attempts,
+                    type(exc).__name__,
+                    _safe_provider_message(exc, self.settings),
+                )
             except Exception as exc:  # SDK transport/status errors degrade to TEMPLATE
                 last = exc
+                logger.warning(
+                    "Gemini provider attempt %d failed with %s: %s",
+                    self.attempts,
+                    type(exc).__name__,
+                    _safe_provider_message(exc, self.settings),
+                )
         if isinstance(last, TimeoutError):
             raise ProviderTimeout("provider timed out") from last
         raise ProviderError("provider request failed") from last

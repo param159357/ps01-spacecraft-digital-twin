@@ -8,9 +8,10 @@ recorded as passing because it "should" pass.
 ## Phase 9 — deployment stack (hosted defect correction; re-verification pending)
 
 **Dates:** 2026-09-23–2026-09-24
-**Status:** a real Google Cloud deployment exposed two repository defects. Both are fixed
-and the complete local check set passes. The corrected commit still needs to be deployed
-and the public structured-output/Caddy paths re-verified before Phase 9 can be complete.
+**Status:** a real Google Cloud deployment exposed two repository defects and then a
+second Gemini schema-compatibility defect. All three are fixed locally and the complete
+local check set passes. The latest correction still needs to be deployed and the public
+structured-output/Caddy paths re-verified before Phase 9 can be complete.
 
 The earlier Compose measurements below ran against the real local stack — `ps01-api`
 image, Caddy and PostgreSQL — reached through Caddy on `http://localhost:8080`, not against
@@ -18,30 +19,34 @@ a dev server.
 
 ### 2026-09-24 hosted deployment defects and local correction
 
-Confirmed on the real deployment before this fix: the authorized Gemini key and exact
-model `gemini-3.5-flash` completed basic generation and the first evidence-tool selection
-turn. Both the incident investigation and history review structured-output turns failed
-with HTTP 400 because their Pydantic JSON schemas contained `additionalProperties`, which
-Gemini rejects. Also, `npm run build` wrote `frontend/.next-export/index.html` while
-Compose mounted `frontend/out`, leaving a fresh Caddy container without the built site.
+Confirmed on the real deployment: the authorized Gemini key and exact model
+`gemini-3.5-flash` completed basic generation, the first evidence-tool selection turn and
+a small `response_json_schema`. Removing `additionalProperties` recursively from the
+generated Pydantic schema did not resolve the final-output request: the sanitized
+`InvestigationOutput` schema still returned HTTP 400 `INVALID_ARGUMENT`. Its remaining
+`$defs`, `$ref`, metadata and constraints were therefore removed from the provider
+contract by replacing it with a minimal manual schema. The earlier Caddy export-path
+defect remains corrected: Compose directly mounts `frontend/.next-export`.
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Focused Gemini tests | `./.venv/Scripts/python.exe -m pytest -q tests/test_phase9_gemini.py`: **6 passed**; nested removal, investigation schema and history schema explicitly asserted |
-| 2 | Full backend suite | isolated disposable test settings and local test database: **132 passed** in **121.74 s** |
+| 1 | Focused Gemini tests | included in the full suite: **6 passed**; both actual Gemini response paths receive fully inlined schemas containing only `type`, `properties`, `required` and `items` |
+| 2 | Full backend suite | isolated disposable test settings and local test database: **132 passed** in **78.55 s** |
 | 3 | Documented Ruff scope | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts`: **all checks passed** |
-| 4 | TypeScript | `npx tsc --noEmit`: exit 0 |
-| 5 | Frontend production export | `npm run build`: exit 0, **9 application routes**; actual `frontend/.next-export/index.html` exists, **5,545 bytes** |
+| 4 | TypeScript | `npm exec tsc -- --noEmit`: exit 0 |
+| 5 | Frontend production export | `npm run build`: exit 0, **9 application routes** exported to `frontend/.next-export` |
 | 6 | Schema drift | `./.venv/Scripts/python.exe -m alembic check`: **no new upgrade operations detected** |
 | 7 | Compose validation | `docker compose --env-file NUL config --quiet` with a temporary non-secret session placeholder: exit 0; no repository environment file or API key was read or printed |
 
-The Gemini conversion is provider-only and recursively removes every
-`additionalProperties` key from a copied response schema. The original Pydantic
-`extra="forbid"` contracts, response model validation, evidence-ID checks and supported
-action-ID checks are unchanged. Both Gemini response paths use the converted schema;
-OpenAI remains unchanged.
+The Gemini boundary now uses explicit investigation and history schemas with no `$defs`,
+`$ref`, `additionalProperties`, schema titles or length/count constraints. The complete
+output structures are retained. The original Pydantic `extra="forbid"` contracts,
+response-model validation, evidence-ID checks and supported-action-ID checks are
+unchanged, and OpenAI remains unchanged. A simulated provider error also verified that
+the exception type and redacted message are logged without the secret, input dataset,
+prompt, telemetry or evidence content.
 
-No post-fix live Gemini request was run from this workstation, so a successful
+No post-second-fix live Gemini request was run from this workstation, so a successful
 `generation_mode=LLM` structured investigation and history review remain pending after
 the corrected commit is deployed. The pre-fix provider successes and HTTP 400 failures
 are recorded as supplied deployment evidence, not converted into a success claim.

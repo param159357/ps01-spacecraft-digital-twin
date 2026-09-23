@@ -7,19 +7,22 @@ Newest first within each phase.
 
 ## Phase 9 — deployment stack, verified locally
 
-### Gemini response schemas are converted only at the provider boundary
+### Gemini receives minimal manual schemas only at the provider boundary
 
-The real Gemini deployment proved that `gemini-3.5-flash`, the authorized key and the
-manual function-calling turn work, but both structured-output paths returned HTTP 400.
-Pydantic correctly emits `additionalProperties: false` for the application's strict
-models; Gemini rejects that keyword in `response_json_schema`, including when nested under
-`$defs`.
+The real Gemini deployment proved that `gemini-3.5-flash`, the authorized key, manual
+function calling and a small structured schema work. It also proved that merely removing
+`additionalProperties` from Pydantic's generated schemas is insufficient: the remaining
+`$defs`, `$ref`, metadata and constraints still caused HTTP 400 `INVALID_ARGUMENT`.
 
-The Gemini adapter now recursively removes only the `additionalProperties` keys from a
-copied provider schema. The Pydantic models remain `extra="forbid"`, and the returned JSON
-still passes the original model, evidence-citation and supported-action validation. The
-OpenAI schema path is unchanged. This keeps provider compatibility separate from the
-application's trust boundary.
+The Gemini adapter therefore supplies two small, fully inlined response schemas written
+with only `type`, `properties`, `required` and `items`. They preserve every field and the
+nested cited-statement shape of `InvestigationOutput`, plus every `HistoryReviewOutput`
+field. These are transport hints, not replacements for the trust boundary: Gemini output
+still passes the original strict Pydantic models, evidence-citation checks and enabled-
+action checks. OpenAI continues to receive its original strict generated schema.
+
+Provider failures log only a bounded, credential-redacted exception type and message.
+Prompts, telemetry and tool evidence are never included in those log records.
 
 ### Fresh servers build the static export in place
 
