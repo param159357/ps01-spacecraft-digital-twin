@@ -8,12 +8,9 @@ data. Later phases replace these handlers with real implementations.
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends
 
 from app.api.deps import (
-    not_implemented,
     require_csrf,
     require_master,
     require_operational,
@@ -30,20 +27,4 @@ _OPERATIONAL_MUTATION = [Depends(require_operational), Depends(require_csrf)]
 # They live in app/api/live.py and app/api/simulator.py.
 
 
-# ------------------------------------------------------------------------- incidents
-
-
-@router.post("/incidents/{incident_id}/investigate", dependencies=_OPERATIONAL_MUTATION)
-def investigate_incident(incident_id: UUID) -> None:
-    raise not_implemented(7, "Bounded AI investigation")
-
-
 # ------------------------------------------------------------- forecasts and commands
-
-
-# -------------------------------------------------------------- analysis
-
-
-@router.get("/analyses/{analysis_id}", dependencies=_OPERATIONAL)
-def get_analysis(analysis_id: UUID) -> None:
-    raise not_implemented(7, "Analysis results")

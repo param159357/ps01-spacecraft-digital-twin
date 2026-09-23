@@ -59,9 +59,7 @@ def test_window_semantics_are_explicit_and_completed():
     assert monthly.label == "Completed calendar month 2026-08 UTC"
 
 
-def test_synthetic_month_statistics_tools_and_real_api(
-    client, clean_runs, session_factory
-):
+def test_synthetic_month_statistics_tools_and_real_api(client, clean_runs, session_factory):
     # June has five Tuesdays, exercising every command/outcome category once.
     spec = SyntheticHistorySpec(month=date(2026, 6, 1), seed=6026)
     with session_factory() as db:
@@ -103,8 +101,9 @@ def test_synthetic_month_statistics_tools_and_real_api(
         recent = get_recent_telemetry(
             db,
             first.run_id,
-            before_sim_time_s=(first.first_seen_utc - datetime(2026, 6, 1, tzinfo=UTC))
-            .total_seconds()
+            before_sim_time_s=(
+                first.first_seen_utc - datetime(2026, 6, 1, tzinfo=UTC)
+            ).total_seconds()
             + 120,
             seconds=240,
         )
@@ -123,22 +122,33 @@ def test_synthetic_month_statistics_tools_and_real_api(
     response = client.get(path)
     assert response.status_code == 200, response.text
     assert response.json()["incidents"]["distinct_count"] == 5
-    assert client.get(
-        "/api/history/summary?source=LIVE&period=monthly&start=2026-06-01"
-    ).json()["incidents"]["distinct_count"] == 0
+    assert (
+        client.get("/api/history/summary?source=LIVE&period=monthly&start=2026-06-01").json()[
+            "incidents"
+        ]["distinct_count"]
+        == 0
+    )
     for field in HIDDEN_FIELDS:
         assert field not in response.text
 
     body = {"source": "SYNTHETIC", "period": "monthly", "start": "2026-06-01"}
     first_review = client.post("/api/history/review", json=body, headers=csrf_headers(client))
-    second_review = client.post("/api/history/review", json=body, headers=csrf_headers(client))
     assert first_review.status_code == 200, first_review.text
-    assert first_review.json()["generation_mode"] == "TEMPLATE"
+    analysis_id = first_review.json()["analysis_id"]
+    import time
+
+    for _ in range(30):
+        completed = client.get(f"/api/analyses/{analysis_id}")
+        if completed.json()["status"] == "COMPLETED":
+            break
+        time.sleep(0.02)
+    second_review = client.post("/api/history/review", json=body, headers=csrf_headers(client))
+    assert completed.json()["generation_mode"] == "TEMPLATE"
     assert first_review.json()["cached"] is False
     assert second_review.json()["cached"] is True
-    assert first_review.json()["result"] == second_review.json()["result"]
+    assert completed.json()["result"] == second_review.json()["result"]
     for field in HIDDEN_FIELDS:
-        assert field not in first_review.text
+        assert field not in completed.text
 
 
 def test_long_incident_is_counted_once_even_with_many_events(session_factory, engine):

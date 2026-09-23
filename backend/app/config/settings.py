@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     llm_daily_call_limit: int = Field(default=30, alias="LLM_DAILY_CALL_LIMIT")
     llm_max_output_tokens: int = Field(default=1200, alias="LLM_MAX_OUTPUT_TOKENS")
     ai_incident_cooldown_seconds: int = Field(default=120, alias="AI_INCIDENT_COOLDOWN_SECONDS")
+    ai_pending_queue_limit: int = Field(default=10, alias="AI_PENDING_QUEUE_LIMIT")
+    ai_max_tool_calls: int = Field(default=4, alias="AI_MAX_TOOL_CALLS")
+    ai_max_provider_attempts: int = Field(default=3, alias="AI_MAX_PROVIDER_ATTEMPTS")
 
     # --- Optional ML (Phase 10) ---
     anomaly_model_path: str = Field(default="", alias="ANOMALY_MODEL_PATH")

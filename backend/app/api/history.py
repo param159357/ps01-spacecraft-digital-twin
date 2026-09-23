@@ -5,13 +5,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.analysis.history import (
     compute_history_summary,
-    get_or_create_review,
     resolve_window,
 )
 from app.api.deps import require_csrf, require_operational
@@ -52,7 +51,9 @@ def history_summary(
     "/history/review",
     dependencies=[Depends(require_operational), Depends(require_csrf)],
 )
-def history_review(body: ReviewRequest, db: Session = Depends(get_session)) -> dict[str, Any]:
+def history_review(
+    body: ReviewRequest, request: Request, db: Session = Depends(get_session)
+) -> dict[str, Any]:
     window = _window(body.period, body.start, body.end)
     try:
         summary = compute_history_summary(db, source=body.source, window=window)
@@ -61,11 +62,4 @@ def history_review(body: ReviewRequest, db: Session = Depends(get_session)) -> d
             status_code=422,
             detail={"error": "INVALID_HISTORY_SOURCE", "message": str(exc)},
         ) from exc
-    row, cached = get_or_create_review(db, summary)
-    return {
-        "analysis_id": str(row.id),
-        "generation_mode": row.generation_mode,
-        "status": row.status,
-        "cached": cached,
-        "result": row.result,
-    }
+    return request.app.state.analysis.enqueue_history(summary)

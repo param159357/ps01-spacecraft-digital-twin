@@ -88,20 +88,22 @@ def _command_ids(event: IncidentEventRow) -> set[UUID]:
     return result
 
 
-def compute_history_summary(
-    db: Session, *, source: str, window: HistoryWindow
-) -> dict[str, Any]:
+def compute_history_summary(db: Session, *, source: str, window: HistoryWindow) -> dict[str, Any]:
     """Compute facts for exactly one source and one bounded window."""
     if source not in VALID_SOURCES:
         raise ValueError(f"source must be one of {sorted(VALID_SOURCES)}")
 
-    runs = db.execute(
-        select(Run.id).where(
-            Run.source == source,
-            Run.sim_epoch_utc < window.end_utc,
-            or_(Run.ended_at.is_(None), Run.ended_at >= window.start_utc),
+    runs = (
+        db.execute(
+            select(Run.id).where(
+                Run.source == source,
+                Run.sim_epoch_utc < window.end_utc,
+                or_(Run.ended_at.is_(None), Run.ended_at >= window.start_utc),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     run_ids = tuple(runs)
 
     bucket_rows: list[HistoryBucketRow] = []
@@ -286,12 +288,16 @@ def render_period_review(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_or_create_review(db: Session, summary: dict[str, Any]) -> tuple[AnalysisRow, bool]:
+def history_window_key(summary: dict[str, Any]) -> str:
     window = summary["window"]
-    key = (
+    return (
         f"history:{summary['dataset']}:{window['period']}:"
         f"{window['start_utc']}:{window['end_utc']}:history-review-1"
     )
+
+
+def get_or_create_review(db: Session, summary: dict[str, Any]) -> tuple[AnalysisRow, bool]:
+    key = history_window_key(summary)
     existing = db.execute(
         select(AnalysisRow)
         .where(

@@ -24,9 +24,10 @@ from app.storage.models import CommandRow, ForecastRow, IncidentEventRow, Incide
 
 
 class OperationalService:
-    def __init__(self, config: VehicleConfiguration, bus: Any) -> None:
+    def __init__(self, config: VehicleConfiguration, bus: Any, analysis: Any = None) -> None:
         self.config = config
         self.bus = bus
+        self.analysis = analysis
         self.incident_engine = IncidentEngine(config)
         self.latest_estimate: ObservedStateEstimate | None = None
         self.latest_forecast = None
@@ -44,10 +45,11 @@ class OperationalService:
             self._latest_frame.model_copy(update={"sim_time_s": sim_time_s}), age_s
         )
         if incident is not None:
-            await asyncio.to_thread(self._persist_incident, incident)
+            change = await asyncio.to_thread(self._persist_incident, incident)
             self.bus.publish(
                 StreamEventType.INCIDENT, incident.model_dump(mode="json"), incident.run_id
             )
+            self._enqueue_incident_change(incident.id, change)
 
     async def process_frame(self, frame: TelemetryFrame) -> None:
         self._latest_frame = frame
@@ -64,11 +66,15 @@ class OperationalService:
         forecast_crossing = bool(self.latest_forecast and self.latest_forecast.crossings)
         changed = self.incident_engine.evaluate(frame, forecast_crossing)
         for incident in changed:
-            await asyncio.to_thread(self._persist_incident, incident)
+            change = await asyncio.to_thread(self._persist_incident, incident)
             self.bus.publish(
                 StreamEventType.INCIDENT, incident.model_dump(mode="json"), frame.run_id
             )
-        await asyncio.to_thread(self._observe_command_outcomes, frame)
+            self._enqueue_incident_change(incident.id, change)
+        failed = await asyncio.to_thread(self._observe_command_outcomes, frame)
+        if self.analysis:
+            for incident_id in failed:
+                self.analysis.enqueue_incident(incident_id, "FAILED_RECOVERY")
 
     def list_incidents(self, run_id: UUID | None) -> list[Incident]:
         return sorted(
@@ -128,9 +134,7 @@ class OperationalService:
             run_id=estimate.run_id,
             incident_id=incident_id,
             action_id=action_id,
-            action_arguments=(
-                {"branch_id": branch.id} if isolate else {"duty_percent": duty}
-            ),
+            action_arguments=({"branch_id": branch.id} if isolate else {"duty_percent": duty}),
             evidence_frame_seq=estimate.frame_seq,
             control_revision=estimate.control_revision,
             created_at_utc=now,
@@ -140,8 +144,7 @@ class OperationalService:
             input_validity={"battery_soc": (0.0, 100.0)},
             outcome_paths=(
                 (
-                    f"Measured load falls by about {branch.rated_w:.0f} W if the isolator "
-                    "responds."
+                    f"Measured load falls by about {branch.rated_w:.0f} W if the isolator responds."
                     if isolate
                     else "Measured load falls after application."
                 ),
@@ -225,10 +228,11 @@ class OperationalService:
         self._persist_command(updated)
         self.bus.publish(StreamEventType.COMMAND, updated.model_dump(mode="json"), updated.run_id)
 
-    def _observe_command_outcomes(self, frame: TelemetryFrame) -> None:
+    def _observe_command_outcomes(self, frame: TelemetryFrame) -> list[UUID]:
+        failed: list[UUID] = []
         load = frame.value_if_valid("load_power")
         if not isinstance(load, (int, float)):
-            return
+            return failed
         for cid, (tick, before) in list(self._command_start_load.items()):
             if frame.tick_seq - tick < 3:
                 continue
@@ -250,10 +254,15 @@ class OperationalService:
             self.bus.publish(
                 StreamEventType.COMMAND, updated.model_dump(mode="json"), updated.run_id
             )
+            proposal = self.proposals.get(updated.proposal_id) if updated.proposal_id else None
+            if not improved and proposal and proposal.incident_id:
+                failed.append(proposal.incident_id)
             del self._command_start_load[cid]
+        return failed
 
-    def _persist_incident(self, i: Incident) -> None:
+    def _persist_incident(self, i: Incident) -> tuple[str, ...]:
         payload = i.model_dump(mode="json")
+        changes: list[str] = []
         with session_scope() as db:
             row = db.get(IncidentRow, i.id)
             if row is None:
@@ -273,6 +282,7 @@ class OperationalService:
                     evidence=payload,
                 )
                 db.add(row)
+                changes.append("INCIDENT_OPENED")
                 # The event model has only the scalar foreign key (no ORM relationship),
                 # so establish the parent row before its first timeline entry.
                 db.flush()
@@ -304,6 +314,9 @@ class OperationalService:
                 row.evidence_revision += 1
                 evidence_ids = [item.evidence_id for item in i.observed_evidence[-3:]]
                 if old_severity != i.severity.value:
+                    rank = {"UNKNOWN": 0, "INFO": 1, "WARNING": 2, "CRITICAL": 3}
+                    if rank.get(i.severity.value, 0) > rank.get(old_severity, 0):
+                        changes.append("SEVERITY_ESCALATED")
                     db.add(
                         IncidentEventRow(
                             incident_id=i.id,
@@ -322,8 +335,7 @@ class OperationalService:
                             at_utc=i.last_seen_utc,
                             kind="LIFECYCLE_CHANGED",
                             detail=(
-                                f"Lifecycle changed from {old_lifecycle} "
-                                f"to {i.lifecycle.value}."
+                                f"Lifecycle changed from {old_lifecycle} to {i.lifecycle.value}."
                             ),
                             severity=i.severity.value,
                             lifecycle=i.lifecycle.value,
@@ -342,6 +354,13 @@ class OperationalService:
                             evidence_ids=evidence_ids,
                         )
                     )
+        return tuple(changes)
+
+    def _enqueue_incident_change(self, incident_id: UUID, changes: tuple[str, ...]) -> None:
+        if not self.analysis:
+            return
+        for trigger in changes:
+            self.analysis.enqueue_incident(incident_id, trigger)
 
     def _persist_forecast(self, f: Any) -> None:
         with session_scope() as db:
@@ -413,6 +432,9 @@ class OperationalService:
                     previous_outcome != c.observed_outcome.value
                     and c.observed_outcome.value != "PENDING_OBSERVATION"
                 ):
+                    incident_row = db.get(IncidentRow, proposal.incident_id)
+                    if incident_row is not None:
+                        incident_row.evidence_revision += 1
                     db.add(
                         IncidentEventRow(
                             incident_id=proposal.incident_id,
