@@ -1,0 +1,113 @@
+# PS01 vehicle fixture — CLAUDE.md section 7.1, 7.3, 7.4.
+#
+# THIS IS AN ILLUSTRATIVE TEST VEHICLE. Every constant below is an implementation
+# assumption chosen to make the demonstration reproducible and independently
+# testable. None of it is sourced from NASA, ISRO or any real spacecraft.
+
+config_version: "spacecraft-0.2.0"
+model_version: "twin-0.2.0"
+vehicle_name: "PS01 Demonstration Vehicle"
+
+power:
+  battery_capacity_wh: 1000.0          # provenance: fixture (section 7.1)
+  initial_soc_percent: 70.0            # fixture
+  bus_target_v: 28.0                   # regulated bus setpoint, fixture
+  solar_rated_w: 300.0                 # max available sunlit bus-side power, fixture
+  essential_load_w: 100.0              # includes the nominal reaction-wheel allowance
+  payload_nominal_w: 80.0              # optional payload at 100% duty
+  heater_rated_w: 30.0                 # thermostat-controlled battery heater
+  eta_charge: 0.95                     # fixture
+  eta_discharge: 0.95                  # fixture
+  charge_limit_w: 200.0                # fixture
+  discharge_limit_w: 500.0             # fixture
+  battery_v_empty: 24.0                # toy open-circuit voltage at 0% energy
+  battery_v_full: 29.0                 # toy open-circuit voltage at 100% energy
+  battery_series_resistance_ohm: 0.05  # toy value
+  soc_warning_percent: 20.0
+  soc_critical_percent: 10.0
+  # Toy array operating point. The array feeds the regulated bus, so its reported
+  # voltage is an operating voltage that drifts with panel temperature, not an
+  # open-circuit measurement. In eclipse the array reports 0 V / 0 A.
+  solar_reference_voltage_v: 34.0      # at 25 degC, fixture
+  solar_voltage_tempco_v_per_k: 0.08   # fixture
+  # Declared load-shedding order when supply cannot meet demand. Essential load is
+  # never shed, and an uncontrolled fault load cannot be shed by definition.
+  shed_order: [payload, heater]
+
+observation:
+  # Seeded sensor noise, expressed as a standard deviation in each channel's own unit.
+  # Bounded and documented so detection is never tuned against a hidden noise model.
+  noise_sigma:
+    voltage_v: 0.02
+    current_a: 0.01
+    power_w: 0.5
+    temperature_c: 0.05
+    soc_percent: 0.10
+    pressure_bar: 0.01
+    mass_kg: 0.0002
+
+thermal:
+  # Effective linear boundary: a toy heat-rejection model over a limited range.
+  # It is NOT air convection and NOT a full radiation model. Celsius differences only.
+  boundary_sunlight_c: 10.0
+  boundary_eclipse_c: -5.0
+  heater_on_below_c: 8.0               # thermostat targets the battery node
+  heater_off_above_c: 12.0             # state holds between the two thresholds
+  nodes:
+    battery:
+      heat_capacity_j_per_k: 1800.0
+      conductance_w_per_k: 1.2
+      initial_c: 20.0
+      heat_input: electrical_losses_plus_heater
+    panel:
+      heat_capacity_j_per_k: 3000.0
+      conductance_w_per_k: 1.5
+      initial_c: 30.0
+      heat_input: solar_illumination
+      sunlit_w: 60.0
+      eclipse_w: 0.0
+    computer:
+      heat_capacity_j_per_k: 1000.0
+      conductance_w_per_k: 1.0
+      initial_c: 25.0
+      heat_input: fixed_when_powered
+      nominal_w: 15.0
+    payload:
+      heat_capacity_j_per_k: 1200.0
+      conductance_w_per_k: 1.6
+      initial_c: 25.0
+      heat_input: fraction_of_served_payload_power
+      fraction: 0.35
+    tank:
+      heat_capacity_j_per_k: 2500.0
+      conductance_w_per_k: 0.4
+      initial_c: 15.0
+      heat_input: fixed
+      nominal_w: 2.0
+    thruster:
+      heat_capacity_j_per_k: 500.0
+      conductance_w_per_k: 0.8
+      initial_c: 15.0
+      heat_input: valve_actuator_only   # explicitly not combustion heat
+      valve_open_w: 6.0
+
+propellant:
+  # Simple cold-gas store. Does not certify real blowdown behaviour.
+  specific_gas_constant_j_per_kg_k: 296.8   # nitrogen-like, fixture
+  initial_gas_mass_kg: 0.20
+  tank_volume_m3: 0.010
+  initial_temperature_k: 288.15
+  nominal_valve_flow_kg_per_s: 0.0001
+  # Reference: 0.20 * 296.8 * 288.15 / 0.010 = 1710460 Pa ~= 17.1046 bar absolute
+
+environment:
+  # A configured demonstration schedule. NOT an orbital calculation.
+  sunlight_minutes: 60
+  eclipse_minutes: 30
+  contact_windows_note: "Expected-contact schedule is defined per run in Phase 2."
+
+simulation:
+  tick_seconds: 1.0
+  forecast_horizon_s: 1800
+  forecast_max_points: 181
+  seed: 20260923

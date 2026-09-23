@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* PS01 visual direction — CLAUDE.md section 5.
+   Mission-control inspired: deep navy/charcoal, restrained cyan accent, status colour
+   always paired with text so colour is never the only signal. No starfields, no
+   flashing cards, no decorative animation. */
+
+@theme {
+  --color-void: #070b13;
+  --color-deck: #0b1220;
+  --color-panel: #111a2b;
+  --color-panel-raised: #16223a;
+  --color-edge: #1f2d47;
+  --color-edge-strong: #2c3e60;
+
+  --color-ink: #e6edf7;
+  --color-ink-dim: #9fb0c9;
+  --color-ink-faint: #6b7e9b;
+
+  --color-accent: #35d6f0;
+  --color-accent-dim: #1b7f92;
+
+  --color-nominal: #3ddc97;
+  --color-warning: #f5a524;
+  --color-critical: #f2555a;
+  --color-unavailable: #64748b;
+
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", "JetBrains Mono", monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-void);
+  color: var(--color-ink);
+}
+
+body {
+  font-feature-settings: "cv03", "cv04";
+}
+
+/* Telemetry must line up column-wise and must not jitter as digits change. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* Visible keyboard focus everywhere — required for the operator workflow. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-deck);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-edge-strong);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-faint);
+}

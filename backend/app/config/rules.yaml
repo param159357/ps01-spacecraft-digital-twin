@@ -1,0 +1,137 @@
+# PS01 rule catalogue — CLAUDE.md section 8.1.
+#
+# `implemented: false` means the rule is declared but does NOT run yet. The UI must
+# show unsupported detection coverage honestly rather than implying full coverage.
+# Phase 3 implements the first six; the remaining four are later enhancements.
+#
+# All thresholds are starting test values for a fictional vehicle, not flight limits.
+
+config_version: "rules-0.1.0"
+
+defaults:
+  healthy_dwell_s: 10.0        # missing data must never satisfy healthy dwell
+  persistence_s: 3.0
+
+rules:
+  - id: DATA_STALE
+    family: DATA_AVAILABILITY
+    severity_default: WARNING
+    subsystem: FLIGHT
+    implemented: false
+    phase: 3
+    description: No valid frame during expected contact. Preserves last-known values.
+    params:
+      warning_after_s: 3.0
+      critical_after_s: 10.0
+      only_during_expected_contact: true
+
+  - id: GENERATION_SHORTFALL
+    family: POWER_GENERATION
+    severity_default: WARNING
+    subsystem: POWER
+    implemented: false
+    phase: 3
+    description: >
+      Sunlit generation below expectation while demand or charge headroom exists and the
+      battery is unexpectedly discharging. Suspected deficit, not a guaranteed panel fault.
+    params:
+      median_window_s: 30.0
+      shortfall_fraction: 0.20          # 20% of eligible expected dispatched generation
+      min_expected_w: 20.0              # ignore undefined ratios near zero
+      require_unexpected_discharge: true
+
+  - id: ENERGY_RESERVE
+    family: POWER_ENERGY
+    severity_default: WARNING
+    subsystem: POWER
+    implemented: false
+    phase: 3
+    description: Observed or forecast state of charge crosses a configured reserve.
+    params:
+      warning_percent: 20.0
+      critical_percent: 10.0
+      use_forecast: true
+
+  - id: THERMAL_LIMIT
+    family: THERMAL
+    severity_default: WARNING
+    subsystem: THERMAL_PROPULSION
+    implemented: false
+    phase: 3
+    description: Valid node temperature persists beyond its own configured operating limits.
+    params:
+      persistence_s: 10.0
+      critical_persistence_s: 2.0
+      hysteresis_c: 2.0                 # 40 C warning recovers below 38 C
+      per_node_limits_from: telemetry.yaml
+
+  - id: ACTUATOR_MISMATCH
+    family: COMMAND_RESPONSE
+    severity_default: WARNING
+    subsystem: THERMAL_PROPULSION
+    implemented: false
+    phase: 5
+    description: Known command differs from observed state or power beyond the response allowance.
+    params:
+      response_allowance_s: 5.0
+      power_tolerance_w: 5.0
+
+  - id: SUPPLY_SHORTAGE
+    family: POWER_SUPPLY
+    severity_default: CRITICAL
+    subsystem: POWER
+    implemented: false
+    phase: 3
+    description: >
+      Bus deviation or unmet demand with corroborating current or load evidence. The fast
+      simulator interlock runs separately from this ground-side rule.
+    params:
+      bus_low_v: 26.0
+      persistence_s: 2.0
+      require_unmet_or_current: true
+
+  - id: PRESSURE_INCONSISTENCY
+    family: PROPULSION
+    severity_default: INFO
+    subsystem: THERMAL_PROPULSION
+    implemented: false
+    phase: null
+    description: >
+      Pressure/temperature relation departs from the model and known usage. A pressure fall
+      caused by cooling is not by itself a leak.
+    params:
+      residual_bar: 1.0
+      persistence_s: 30.0
+
+  - id: FLIGHT_PROFILE_DEVIATION
+    family: FLIGHT_DYNAMICS
+    severity_default: WARNING
+    subsystem: FLIGHT_SYSTEMS
+    implemented: false
+    phase: null
+    description: Rates, pointing or wheel values depart from the configured mode profile.
+    params:
+      persistence_s: 5.0
+
+  - id: RESET_RECURRENCE
+    family: AVIONICS
+    severity_default: WARNING
+    subsystem: FLIGHT_SYSTEMS
+    implemented: false
+    phase: null
+    description: Multiple distinct reset events within a configured window.
+    params:
+      window_s: 900.0
+      min_events: 2
+
+  - id: SENSOR_INCONSISTENCY
+    family: SENSOR
+    severity_default: INFO
+    subsystem: MASTER
+    implemented: false
+    phase: null
+    description: >
+      Measurement behaviour conflicts with other available evidence or the model. May resolve
+      to "insufficient evidence" rather than a confirmed sensor fault.
+    params:
+      persistence_s: 30.0

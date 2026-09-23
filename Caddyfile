@@ -1,0 +1,41 @@
+# Caddy serves the exported frontend and proxies the API on one origin.
+# Same-origin means the session cookie needs no cross-site relaxation.
+#
+# SITE_ADDRESS is `:80` for a local/LAN demo, or your domain name for HTTPS with an
+# automatic certificate. Set it in .env before `docker compose up`.
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# API first, so it is never shadowed by a static file.
+	handle /api/* {
+		reverse_proxy api:8000 {
+			# Server-Sent Events must not be buffered: -1 flushes each write
+			# immediately, so telemetry reaches the dashboards without delay.
+			flush_interval -1
+			transport http {
+				# A long-lived stream must not be cut by a read timeout.
+				read_timeout 0
+			}
+		}
+	}
+
+	# Static export from `npm run build` (frontend/out), trailing-slash routes.
+	handle {
+		root * /srv/www
+		try_files {path} {path}/ {path}.html /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

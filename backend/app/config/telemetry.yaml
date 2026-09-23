@@ -1,0 +1,356 @@
+# PS01 telemetry channel dictionary — CLAUDE.md section 6.1 / 6.2.
+# Fictional test vehicle. Every bound here is a documented fixture assumption,
+# not a limit sourced from any space agency.
+#
+# bounds.physical  -> rejects impossible encodings (quality INVALID)
+# bounds.operating -> configured limits for this vehicle (rules may reference)
+# bounds.display   -> chart appearance only; never used for validity
+# prediction: MODELLED (coupled maths) | PROFILE (deterministic seeded profile)
+#             | DERIVED (computed from other channels) | RULE_ONLY (no forecast)
+# provenance: SENSOR | DERIVED | GROUND
+
+config_version: "telemetry-0.1.0"
+default_cadence_s: 1
+
+channels:
+  - id: solar_voltage
+    label: Solar array voltage
+    unit: V
+    groups: [POWER]
+    type: float
+    provenance: SENSOR
+    description: Simulated panel sensor reflecting dispatched output and curtailment.
+    bounds: { physical: [0.0, 80.0], operating: [null, null], display: [0.0, 60.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [GENERATION_SHORTFALL]
+
+  - id: solar_current
+    label: Solar array current
+    unit: A
+    groups: [POWER]
+    type: float
+    provenance: SENSOR
+    description: Dispatched array current. Curtailment at a full battery is expected, not a fault.
+    bounds: { physical: [-1.0, 40.0], operating: [null, null], display: [0.0, 15.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [GENERATION_SHORTFALL]
+
+  - id: bus_voltage
+    label: Regulated bus voltage
+    unit: V
+    groups: [POWER]
+    type: float
+    provenance: SENSOR
+    description: Regulated supply with shortage behaviour. Not equal to battery terminal voltage.
+    bounds: { physical: [0.0, 60.0], operating: [26.0, 30.0], display: [20.0, 32.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [SUPPLY_SHORTAGE]
+
+  - id: load_power
+    label: Requested load power
+    unit: W
+    groups: [POWER]
+    type: float
+    provenance: DERIVED
+    description: Total requested bus-side demand. Served and unmet power are exposed separately.
+    bounds: { physical: [0.0, 2000.0], operating: [null, 500.0], display: [0.0, 500.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [SUPPLY_SHORTAGE, ENERGY_RESERVE]
+
+  - id: battery_soc
+    label: Battery state of charge
+    unit: "%"
+    groups: [POWER]
+    type: float
+    provenance: DERIVED
+    description: Estimated energy state from observations, not perfect true-state access.
+    bounds: { physical: [0.0, 100.0], operating: [20.0, 100.0], display: [0.0, 100.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [ENERGY_RESERVE]
+
+  - id: battery_voltage
+    label: Battery terminal voltage
+    unit: V
+    groups: [POWER]
+    type: float
+    provenance: SENSOR
+    description: Modelled terminal voltage including series-resistance effect under load.
+    bounds: { physical: [0.0, 60.0], operating: [24.0, 29.0], display: [22.0, 30.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [SUPPLY_SHORTAGE]
+
+  - id: battery_current
+    label: Battery current
+    unit: A
+    groups: [POWER]
+    type: float
+    provenance: SENSOR
+    description: Positive discharge, negative charge. Negative values are valid.
+    bounds: { physical: [-100.0, 100.0], operating: [null, null], display: [-25.0, 25.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [GENERATION_SHORTFALL]
+
+  - id: battery_temperature
+    label: Battery temperature
+    unit: degC
+    groups: [POWER, THERMAL]
+    type: float
+    provenance: SENSOR
+    description: Lumped battery thermal node observation.
+    bounds: { physical: [-80.0, 150.0], operating: [0.0, 40.0], display: [-20.0, 60.0] }
+    expected_value_method: "thermal_node:battery"
+    prediction: MODELLED
+    rule_refs: [THERMAL_LIMIT]
+
+  - id: cell_voltage_spread
+    label: Cell voltage spread
+    unit: V
+    groups: [POWER]
+    type: float
+    provenance: SENSOR
+    description: Simplified imbalance profile. Rule-only in V1; no physical cell model.
+    bounds: { physical: [0.0, 2.0], operating: [null, 0.05], display: [0.0, 0.2] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: RULE_ONLY
+    rule_refs: [SENSOR_INCONSISTENCY]
+
+  - id: panel_temperature
+    label: Solar panel temperature
+    unit: degC
+    groups: [THERMAL, POWER]
+    type: float
+    provenance: SENSOR
+    description: Simplified panel thermal node; own limits, not copied from the battery.
+    bounds: { physical: [-150.0, 200.0], operating: [-40.0, 90.0], display: [-40.0, 100.0] }
+    expected_value_method: "thermal_node:panel"
+    prediction: MODELLED
+    rule_refs: [THERMAL_LIMIT]
+
+  - id: computer_temperature
+    label: Computer temperature
+    unit: degC
+    groups: [THERMAL, FLIGHT]
+    type: float
+    provenance: SENSOR
+    description: Simplified avionics thermal node.
+    bounds: { physical: [-80.0, 150.0], operating: [-10.0, 60.0], display: [-10.0, 70.0] }
+    expected_value_method: "thermal_node:computer"
+    prediction: MODELLED
+    rule_refs: [THERMAL_LIMIT]
+
+  - id: payload_temperature
+    label: Payload temperature
+    unit: degC
+    groups: [THERMAL]
+    type: float
+    provenance: SENSOR
+    description: Simplified optional-payload thermal node.
+    bounds: { physical: [-80.0, 150.0], operating: [-10.0, 55.0], display: [-10.0, 70.0] }
+    expected_value_method: "thermal_node:payload"
+    prediction: MODELLED
+    rule_refs: [THERMAL_LIMIT]
+
+  - id: tank_temperature
+    label: Propellant tank temperature
+    unit: degC
+    groups: [THERMAL]
+    type: float
+    provenance: SENSOR
+    description: Used in the cold-gas consistency check. Converted to kelvin for gas maths.
+    bounds: { physical: [-100.0, 150.0], operating: [-20.0, 50.0], display: [-20.0, 60.0] }
+    expected_value_method: "thermal_node:tank"
+    prediction: MODELLED
+    rule_refs: [THERMAL_LIMIT, PRESSURE_INCONSISTENCY]
+
+  - id: heater_power
+    label: Heater electrical power
+    unit: W
+    groups: [THERMAL, POWER]
+    type: float
+    provenance: SENSOR
+    description: Observed heater activity, compared against the commanded thermostat state.
+    bounds: { physical: [0.0, 200.0], operating: [0.0, 30.0], display: [0.0, 40.0] }
+    expected_value_method: electrical_model
+    prediction: MODELLED
+    rule_refs: [ACTUATOR_MISMATCH]
+
+  - id: propellant_mass
+    label: Propellant mass estimate
+    unit: kg
+    groups: [THERMAL]
+    type: float
+    provenance: DERIVED
+    description: Estimated cold-gas quantity. Derived from pressure and temperature, not weighed.
+    bounds: { physical: [0.0, 1.0], operating: [0.02, null], display: [0.0, 0.25] }
+    expected_value_method: propellant_model
+    prediction: MODELLED
+    rule_refs: [PRESSURE_INCONSISTENCY]
+
+  - id: tank_pressure
+    label: Tank pressure
+    unit: bar_absolute
+    groups: [THERMAL]
+    type: float
+    provenance: SENSOR
+    description: Gas-store pressure. A decrease caused by cooling is not by itself a leak.
+    bounds: { physical: [0.0, 50.0], operating: [2.0, 25.0], display: [0.0, 20.0] }
+    expected_value_method: propellant_model
+    prediction: MODELLED
+    rule_refs: [PRESSURE_INCONSISTENCY]
+
+  - id: thruster_valve_open
+    label: Thruster valve open
+    unit: boolean
+    groups: [THERMAL]
+    type: boolean
+    provenance: SENSOR
+    description: Observed valve status, held separately from the commanded state.
+    bounds: { physical: [null, null], operating: [null, null], display: [null, null] }
+    expected_value_method: commanded_state
+    prediction: MODELLED
+    rule_refs: [ACTUATOR_MISMATCH]
+
+  - id: thruster_temperature
+    label: Thruster temperature
+    unit: degC
+    groups: [THERMAL]
+    type: float
+    provenance: SENSOR
+    description: Toy cold-gas thruster node. Valve/actuator heat only, no combustion heat.
+    bounds: { physical: [-100.0, 200.0], operating: [-30.0, 60.0], display: [-20.0, 60.0] }
+    expected_value_method: "thermal_node:thruster"
+    prediction: MODELLED
+    rule_refs: [THERMAL_LIMIT]
+
+  - id: pointing_error
+    label: Pointing error
+    unit: deg
+    groups: [FLIGHT, POWER]
+    type: float
+    provenance: SENSOR
+    description: Simplified deviation from desired orientation. Profile-driven, not an ADCS model.
+    bounds: { physical: [0.0, 180.0], operating: [null, 5.0], display: [0.0, 10.0] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: PROFILE
+    rule_refs: [FLIGHT_PROFILE_DEVIATION]
+
+  - id: roll_rate
+    label: Roll rate
+    unit: deg/s
+    groups: [FLIGHT]
+    type: float
+    provenance: SENSOR
+    description: Simplified angular rate profile.
+    bounds: { physical: [-50.0, 50.0], operating: [-1.0, 1.0], display: [-2.0, 2.0] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: PROFILE
+    rule_refs: [FLIGHT_PROFILE_DEVIATION]
+
+  - id: pitch_rate
+    label: Pitch rate
+    unit: deg/s
+    groups: [FLIGHT]
+    type: float
+    provenance: SENSOR
+    description: Simplified angular rate profile.
+    bounds: { physical: [-50.0, 50.0], operating: [-1.0, 1.0], display: [-2.0, 2.0] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: PROFILE
+    rule_refs: [FLIGHT_PROFILE_DEVIATION]
+
+  - id: yaw_rate
+    label: Yaw rate
+    unit: deg/s
+    groups: [FLIGHT]
+    type: float
+    provenance: SENSOR
+    description: Simplified angular rate profile.
+    bounds: { physical: [-50.0, 50.0], operating: [-1.0, 1.0], display: [-2.0, 2.0] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: PROFILE
+    rule_refs: [FLIGHT_PROFILE_DEVIATION]
+
+  - id: wheel_speed
+    label: Reaction wheel speed
+    unit: RPM
+    groups: [FLIGHT]
+    type: float
+    provenance: SENSOR
+    description: One selected wheel, not a full four-wheel assembly.
+    bounds: { physical: [-8000.0, 8000.0], operating: [-6000.0, 6000.0], display: [-4000.0, 4000.0] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: PROFILE
+    rule_refs: [FLIGHT_PROFILE_DEVIATION]
+
+  - id: wheel_current
+    label: Reaction wheel current
+    unit: A
+    groups: [FLIGHT, POWER]
+    type: float
+    provenance: SENSOR
+    description: Selected wheel current. Simple consistency with wheel speed only.
+    bounds: { physical: [-5.0, 5.0], operating: [-1.5, 1.5], display: [-1.0, 1.0] }
+    expected_value_method: "profile:seeded_normal"
+    prediction: PROFILE
+    rule_refs: [FLIGHT_PROFILE_DEVIATION]
+
+  - id: link_snr
+    label: Downlink SNR
+    unit: dB
+    groups: [FLIGHT]
+    type: float
+    provenance: SENSOR
+    description: Observed during expected contact only. Unavailable outside a contact window.
+    bounds: { physical: [-20.0, 60.0], operating: [6.0, null], display: [0.0, 30.0] }
+    expected_value_method: "profile:contact_schedule"
+    prediction: PROFILE
+    rule_refs: [DATA_STALE]
+
+  - id: packet_error_rate
+    label: Packet error rate
+    unit: "%"
+    groups: [FLIGHT]
+    type: float
+    provenance: DERIVED
+    description: Rolling ratio over a 60 s window. Unavailable when the denominator is zero.
+    bounds: { physical: [0.0, 100.0], operating: [null, 5.0], display: [0.0, 20.0] }
+    expected_value_method: "derived:rolling_window"
+    window_seconds: 60
+    prediction: RULE_ONLY
+    rule_refs: [DATA_STALE, SENSOR_INCONSISTENCY]
+
+  - id: computer_reset_count
+    label: Computer reset count
+    unit: count
+    groups: [FLIGHT]
+    type: count
+    provenance: DERIVED
+    description: Cumulative within the current run. A new run restarts it without a physical reset.
+    bounds: { physical: [0.0, 100000.0], operating: [null, null], display: [0.0, 10.0] }
+    expected_value_method: "derived:counter"
+    prediction: RULE_ONLY
+    rule_refs: [RESET_RECURRENCE]
+
+  - id: telemetry_age
+    label: Telemetry age
+    unit: s
+    groups: [FLIGHT, MASTER]
+    type: float
+    provenance: GROUND
+    description: Ground-derived time since the last valid received frame. Not a spacecraft sensor.
+    bounds: { physical: [0.0, 100000.0], operating: [null, 3.0], display: [0.0, 30.0] }
+    expected_value_method: "ground:receipt_clock"
+    prediction: DERIVED
+    rule_refs: [DATA_STALE]
+
+# Freshness policy during expected contact — demonstration settings (section 6.3).
+freshness:
+  warning_after_s: 3.0
+  critical_after_s: 10.0

@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/.next-export/
+frontend/out/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment and secrets — never commit real values
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data and artifacts
+pgdata/
+caddy_data/
+caddy_config/
+*.log
+models/*.joblib
+fixtures/generated/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Stray capture files from manual stream testing
+*.sse

@@ -1,0 +1,181 @@
+# Validation record
+
+Only checks that were actually executed appear here, with their real results. Nothing is
+recorded as passing because it "should" pass.
+
+---
+
+## Phase 2 — shared live simulator
+
+**Date:** 2026-09-23
+**Environment:** as Phase 1.
+
+### Executed checks
+
+| # | Check | Command / method | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `pytest -q` | **74 passed**, 0 failed, 56 s |
+| 2 | Model reference checks | `pytest tests/test_models.py -q` | **27 passed** |
+| 3 | Lint | `ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0** |
+| 5 | Static export build | `npm run build` | **exit 0**, 9 routes |
+| 6 | Energy reference through the simulation | `test_energy_reference_over_1800_seconds` | 1800 × 1 s steps at 100 W draw **52.6316 Wh**, matching section 7.2 |
+| 7 | Step size independent | `test_step_size_does_not_change_the_energy_result` | one 1800 s step equals 1800 × 1 s to 1e-9 |
+| 8 | Thermal integration vs analytic | `test_explicit_integration_matches_the_analytic_step_response` | matches the closed-form first-order response to 1e-3 |
+| 9 | Pressure reference | `test_pressure_reference` | **17.1046 bar absolute**, matching section 7.4 |
+| 10 | Full battery curtails, empty battery sheds | `test_charging_respects_capacity_and_curtails`, `test_empty_battery_sheds_optional_load_instead_of_pretending` | energy stays within [0, capacity]; payload and heater shed; 100 W essential reported unmet |
+| 11 | Two clients, same sequence | two parallel `curl -N /api/stream` against live Uvicorn | both received run `a567003e`, frames **27–33 identical**, same `sim_time_s` and `battery_soc` |
+| 12 | 1 Hz cadence | same capture, 7 s window | 1 snapshot + **7 telemetry events** per client |
+| 13 | Role filtering on the stream | same capture | master **28** channels, power **20**; `wheel_speed` absent for power |
+| 14 | Hidden truth never leaks | `test_operational_responses_never_carry_hidden_truth` + raw stream capture | none of `generation_factor`, `extra_load_w`, `heater_stuck_on`, `contact_loss` present in any operational payload |
+| 15 | Simulator truth is simulator-only | `test_simulator_state_exposes_truth_only_to_the_simulator` | simulator sees `energy_wh` and hidden conditions; master gets **403** |
+| 16 | Loop runs with no browser attached | `test_loop_keeps_running_with_no_client_attached` | frame counter advanced after the simulator signed out |
+| 17 | Reset starts a new run, keeps the old | `test_reset_starts_a_new_run_and_keeps_the_previous_one` | new run ID, `frame_seq` 0, status PAUSED; both runs still listed |
+| 18 | Pause actually stops advancement | `test_pause_stops_advancing_and_start_resumes` | counter frozen while paused, resumes on start |
+| 19 | Condition bounds enforced | `test_condition_bounds_are_enforced` | out-of-range and unknown fields all **422** |
+| 20 | Unmodelled channels are missing, not zero | `test_unmodelled_channels_are_missing_not_zero` | `wheel_speed` is `null` with `MISSING` and a reason |
+| 21 | Browser: master console | Chromium, 1600×950 | live header, SOC 70.4 %, load 179.3 W, battery current **−4.10 A** (charging), charts rendering |
+| 22 | Browser: power boundary balances | same | 300 W available = 180 W served + 120 W charging, 0 curtailed, 0 unmet |
+| 23 | Browser: injection is visible downstream | simulator slider → 150 W extra load | requested load moved **179.5 → 329.6 W** and the step appeared on the chart |
+| 24 | Browser: contact loss ≠ disconnection | simulator "Loss of contact" toggle | header held **RUNNING** and **CONNECTED** while **Data age** climbed to 9.4 s and readings froze |
+| 25 | Checkpoint survives restart | API restarted mid-run | run recovered **paused**, and the injected `contact_loss` was still set — restored from `runs.private_checkpoint` |
+| 26 | Observed vs true | simulator console | observed SOC 71.3 % against true 713.08 Wh; the difference is the declared seeded noise |
+
+### Acceptance criteria for Phase 2
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Two browser sessions display the same sequence | **Pass** | check 11 — two live SSE clients, identical frames 27–33. Verified with two concurrent HTTP clients rather than two browser windows, because one browser profile holds one session cookie per origin; the five-laptop version is a Phase 9 rehearsal item. |
+| Closing the simulator browser does not stop the loop | **Pass** | check 16 |
+| Energy reference test passes | **Pass** | check 6 |
+| Reset starts a new run | **Pass** | check 17 |
+| Private injection data stays off master responses | **Pass** | checks 14, 15 |
+
+### Defects found and fixed during this phase
+
+1. **Heater power read `INVALID` whenever the heater was off.** Sensor noise around a true
+   0 W pushed the reading slightly negative, outside the channel's physical bounds, so
+   every console showed the channel as invalid. Sensor noise cannot produce a value the
+   sensor could not encode, so the noisy reading is now clamped to the encodable range
+   while the *model* value is still checked against physical bounds — keeping `INVALID`
+   for genuine model errors and injected sensor faults. Found by reading the live UI, not
+   by a test.
+2. **`start()` could reuse a run id whose row no longer existed.** If the adopted run had
+   been removed from storage, every tick would have failed its insert. The runner now
+   verifies the run exists and starts a fresh one if not.
+3. **`Subscriber` was unhashable**, so opening the SSE stream raised `TypeError`. The
+   dataclass needed `eq=False` to keep identity hashing.
+4. **`npm run build` corrupted a running `npm run dev`.** Both wrote to `.next`. The
+   export build now uses its own `distDir` (`.next-export`).
+5. **Starlette's `TestClient` cannot stream a never-ending SSE response**, and
+   `request.is_disconnected()` blocked under that transport. The disconnect poll was
+   removed (StreamingResponse already cancels the generator), and the stream is now
+   verified against a real Uvicorn server instead of through `TestClient`.
+
+### Known limitations after Phase 2
+
+- **No detection, incidents or forecasts yet.** All ten rules remain inactive and all five
+  actions disabled; `/api/config/coverage` reports this and the consoles say so.
+- **Ten of the 28 channels are not modelled** — the flight-systems profiles and
+  `cell_voltage_spread`. They report `null` with `MISSING` and a reason. Phase 4.
+- **Flight, power and thermal consoles show a live readout strip only.** Full per-subsystem
+  dashboards are Phase 4.
+- **SSE two-client verification used two HTTP clients, not two browsers.** Same code path
+  (real Uvicorn, real HTTP, real role filtering), but the five-laptop rehearsal is Phase 9.
+- **Contact windows are always "expected".** Scheduled contact gaps arrive in Phase 4;
+  today only the injected `contact_loss` produces staleness.
+- **Telemetry is persisted at 1 Hz with no retention policy.** Roughly 3,600 rows per hour
+  of demo. Bounded fixture generation and retention are Phase 6 concerns.
+- **Deployment still unverified** — only the `db` container has been run. Unchanged from
+  Phase 1.
+
+---
+
+## Phase 1 — foundation, login and role routes
+
+**Date:** 2026-09-23
+**Environment:** Windows 11 Pro, Python 3.14.3, Node 24.19.0, PostgreSQL 17 (Docker),
+Docker Desktop 29.7.2.
+
+### Executed checks
+
+| # | Check | Command | Result |
+|---|---|---|---|
+| 1 | Configuration fixtures parse and validate | `pytest tests/test_config.py -q` | **13 passed** |
+| 2 | Full backend suite | `pytest -q` | **29 passed**, 0 failed, 8.04 s |
+| 3 | Lint | `ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0**, no errors |
+| 5 | Static export build | `npm run build` | **exit 0**, 9 routes exported to `frontend/out` |
+| 6 | Migration renders offline | `alembic upgrade head --sql` | **exit 0**, valid PostgreSQL DDL |
+| 7 | Migration applies | `alembic upgrade head` | **exit 0**, 11 tables created |
+| 8 | No model/schema drift | `alembic check` | **No new upgrade operations detected** |
+| 9 | Account provisioning | `scripts/seed_users.py` | 5 accounts created with generated passwords |
+| 10 | API starts and answers | `curl /api/health` | `200 {"status":"ok"}` |
+| 11 | Missing session → 401 | `curl` on `/auth/me`, `/commands`, `/simulator/state`, `/config/channels` | **401 `NOT_AUTHENTICATED`** on all four |
+| 12 | Specialist command attempt → 403 | live login as `power`, `POST /api/commands` | **403 `ROLE_NOT_PERMITTED`** |
+| 13 | Specialist cannot read simulator truth | live login as `power`, `GET /api/simulator/state` | **403 `ROLE_NOT_PERMITTED`** |
+| 14 | Login in a real browser | Chromium at `http://localhost:3000/login/` | Signed in as `master`, landed on `/master/` |
+| 15 | Cross-console guard | `master` session navigating to `/power/` | Redirected back to `/master/` |
+| 16 | Role-filtered telemetry contract | browser, `flight` account | 22 channels visible vs 28 for `master` |
+
+Checks 1–9 and 12–13 are also covered by automated tests, so they re-run with `pytest`.
+
+### Acceptance criteria for Phase 1
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Local frontend and API start | **Pass** | checks 4, 5, 10, 14 |
+| Five accounts land on their own routes | **Pass** | `test_each_account_lands_on_its_own_console`; browser checks 14 and 16 |
+| Specialist command attempt returns 403 | **Pass** | check 12; `test_specialist_cannot_execute_a_recovery_command` |
+| Missing session returns 401 | **Pass** | check 11; `test_missing_session_returns_401` |
+| Build and types pass | **Pass** | checks 3, 4, 5 |
+| No committed secrets | **Pass** | `.env` is gitignored; `.env.example` holds placeholders only; generated passwords are printed once and never written to a file |
+
+### Defects found and fixed during this phase
+
+1. **API hung forever on startup when PostgreSQL was unreachable.** `engine.connect()`
+   had no connect timeout, so the process never reached "startup complete" and `/health`
+   never answered — which also makes the section 2.3 requirement to *display* a storage
+   error impossible. Fixed by adding `DB_CONNECT_TIMEOUT_SECONDS` (default 5) to the
+   psycopg connect args. Verified: the API now starts with the database down, logs the
+   failure explicitly, and serves `/health` and the 401 path.
+2. **Migration did not match the models.** `alembic check` reported drift: `unique=True,
+   index=True` on a column produces a single *unique index*, while the hand-written
+   migration created a unique constraint plus a separate non-unique index. Fixed in
+   `0001_initial_schema.py`; `alembic check` is now clean.
+3. **Test database URL silently lost its password.** `str(SQLAlchemy URL)` masks the
+   password as `***`, so every database-backed test skipped with an authentication
+   failure that looked like "PostgreSQL is not reachable". Fixed by passing `URL`
+   objects instead of strings.
+4. **Test suite took 130 s instead of 8 s.** `DATABASE_URL` used `localhost`, which
+   resolves to `::1` first; PostgreSQL is published on `127.0.0.1` only, so every
+   connection paid a full IPv6 timeout. Fixed by using `127.0.0.1` explicitly.
+
+### Known limitations after Phase 1
+
+- **There is no simulation yet.** No run, no telemetry, no incidents, no forecasts. Every
+  endpoint for those returns `503 NOT_IMPLEMENTED_YET` with its phase number, and each
+  console names what is missing rather than showing placeholder values.
+- **All ten detection rules are declared but inactive**, and all five recovery actions are
+  disabled. `/api/config/coverage` reports this, and the consoles display "0 of 10
+  active" and "0 of 5 available".
+- **The client-side role guard is convenience only.** It redirects a signed-in user to
+  their own console, but the server enforces the real boundary on every request. Check 12
+  exercises the server path directly with curl, not through the UI.
+- **Login throttling is in-process.** It resets when the API restarts and does not
+  coordinate across instances. Acceptable for a single-process prototype.
+- **Layout has been reviewed at 1366×768 only.** The 1920×1080 review is a Phase 4 task.
+- **Deployment is unverified.** `compose.yaml`, the `Dockerfile` and the `Caddyfile` are
+  written but only the `db` service has been run. The API image has not been built, Caddy
+  has not served the export, and no SSE path has been exercised through the proxy. No
+  deployment URL exists.
+- **No AI provider is configured.** `AI_ENABLED=false`; nothing in Phase 1 depends on it.
+- **Physical five-laptop rehearsal: not attempted.** Phase 9.
+
+### Environment notes
+
+Docker Desktop crashed at first launch on a stale runtime socket
+(`%LOCALAPPDATA%\Docker\run\sailor-ingest.sock`, left from an unclean shutdown on
+19 Sep) and had to be restarted manually before the database could start. Worth knowing
+before demo day: if `docker compose up -d db` fails with a named-pipe error, restart
+Docker Desktop first.
