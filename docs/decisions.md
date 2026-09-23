@@ -5,6 +5,48 @@ Newest first within each phase.
 
 ---
 
+## Phase 9 — deployment stack, verified locally
+
+### The deployment artifact was verified without a host
+
+Phase 9 asks for a deployed persistent target, and no host has ever been chosen or
+authorized for this project. Rather than stop, the phase was split: everything that does
+not need a host was done and measured, and the hosted URL is recorded as blocked.
+
+That split is deliberate, because the part that does not need a host is the part that
+actually breaks. Section 14 warns against discovering hosting incompatibilities at the
+end, and until now the API image, Caddy and the proxied SSE path had never been run — the
+project had only ever started the `db` container. Building and running the real Compose
+stack proved the artifact works: migrations apply at container start, one Uvicorn worker
+owns the loop, Caddy serves the export with trailing-slash routes surviving a direct
+refresh, and SSE arrives through the reverse proxy unbuffered. What remains unverified is
+specifically the hosted concerns — HTTPS, `COOKIE_SECURE=true`, automatic certificates and
+a public domain.
+
+### `.env.example` shipped an origin that breaks the Compose stack
+
+`APP_ORIGIN` was `http://localhost:3000`, the Next dev server, while `HTTP_PORT` was 8080
+and Caddy served there. Anyone following the documented deployment path would have had
+every sign-in rejected as a cross-site request, with a 403 and no obvious cause. The
+default is now the Compose origin, because that is the one that fails: `npm run dev` on
+port 3000 keeps working regardless, since `allowed_origins` already adds localhost:3000
+automatically while `COOKIE_SECURE` is false.
+
+This was confirmed twice — once by needing the override to bring the stack up, and once by
+watching the LAN address return 403 on login while the static site and `/api/health`
+answered normally from the same address.
+
+### The demonstration guide records observed numbers, not intended ones
+
+`docs/demo.md` was a Phase 1 skeleton listing scenarios "to be written". It now walks
+through D01–D06 with the exact simulator preset each one uses and the values actually
+observed on verified runs, including the ones that are unflattering: the accepted command
+that changes nothing, and the payload operating time that never comes back. Where a value
+drifts between runs the text says "about". No scenario is described as working that has
+not been run.
+
+---
+
 ## Phase 8 — essential integration checks
 
 ### Hysteresis is applied by narrowing the limits while an incident is active

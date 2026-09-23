@@ -5,6 +5,88 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 9 — deployment stack (partial: local only, no host)
+
+**Date:** 2026-09-23
+**Status:** the Compose deployment artifact is built, run and measured. The hosted
+deployment is **BLOCKED** — no host has been chosen or authorized for this project, so
+there is no deployed URL, no HTTPS, and no `COOKIE_SECURE=true` verification.
+
+Everything below ran against the real Compose stack — `ps01-api` image, Caddy and
+PostgreSQL — reached through Caddy on `http://localhost:8080`, not against a dev server.
+
+### The deployment artifact
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `docker compose build api` | image `ps01-api:latest`, **402 MB**, python:3.14-slim, non-root uid 10001 |
+| 2 | `docker compose up -d` | `db` healthy, `api` up, `caddy` up on 8080/8443 |
+| 3 | API container start | `alembic upgrade head` applied, then one Uvicorn worker; **0 error or traceback lines** in the log across the whole session |
+| 4 | Caddy serves the export | `/` **200**, direct refresh of `/master/` **200** — trailing-slash routes survive a refresh, no 404 |
+| 5 | Caddy proxies the API | `/api/health` **200**; unauthenticated `/api/incidents` **401** |
+| 6 | Security headers through Caddy | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` present on both static and proxied responses |
+| 7 | Cookies through Caddy | `ps01_session` **HttpOnly**, `ps01_csrf` readable — as designed for double-submit CSRF |
+| 8 | Run control through the deployed path | login → RESET → START returned a running run |
+
+### Proxied SSE — the path that had never been exercised
+
+| # | Check | Result |
+|---|---|---|
+| 9 | Two concurrent clients through Caddy | identical frames 18–31 from one run |
+| 10 | **Not buffered by the proxy** | inter-frame arrival gaps **0.977–1.109 s**, and **0 of 13** under 0.2 s. A buffering proxy delivers in bursts; this does not, so `flush_interval -1` is working |
+
+### Sustained multi-client soak through the deployed stack
+
+Five concurrent SSE clients held open against Caddy for five minutes.
+
+| # | Measurement | Result |
+|---|---|---|
+| 11 | Frames delivered | **198 per client**, sequence 55 → 252, identical on all five |
+| 12 | **Dropped frames** | **0 gaps in sequence** on every client |
+| 13 | Inter-arrival latency | **p95 1.26–1.30 s** |
+| 14 | Outliers | **exactly one arrival per client exceeded 2 s** (2.65–3.23 s). All five clients saw it on the same tick, so the delay was backend-side — one slow tick, not per-client network or proxy behaviour |
+| 15 | Section 13.2 target ("most updates within 2 seconds") | **met**: 197 of 198 arrivals per client were inside 2 s. The single outlier is recorded rather than averaged away; on a venue network it would be worth watching whether it recurs |
+
+### Restart and data survival
+
+| # | Check | Result |
+|---|---|---|
+| 16 | `docker compose restart api` | run returned **PAUSED** with the same run id, requiring an explicit resume |
+| 17 | `docker compose down` (no `-v`) then `up -d` | `ps01_pgdata`, `ps01_caddy_data`, `ps01_caddy_config` all survived; **7,938 telemetry frames and 13 runs still stored**; health 200 after restart |
+
+### Defect found and fixed
+
+**`.env.example` shipped an origin that breaks the documented deployment.** `APP_ORIGIN`
+was `http://localhost:3000` (the Next dev server) while `HTTP_PORT` was 8080 and Caddy
+served there, so every sign-in through the Compose stack would be rejected as a cross-site
+request. Confirmed twice: the stack needed an explicit override to work, and the LAN
+address returned **403 on login** while the static site and `/api/health` answered
+normally from that same address. The default is now the Compose origin; `npm run dev` on
+3000 is unaffected because `allowed_origins` adds it automatically while `COOKIE_SECURE`
+is false.
+
+### LAN fallback
+
+The stack is entirely local — Caddy, the API and PostgreSQL on one machine, no external
+dependency, AI disabled and the historical month generated locally. Serving the other four
+laptops over the LAN works once `APP_ORIGIN` and `SITE_ADDRESS` name that machine's
+address; the 403 above is exactly what happens if that step is skipped, and `docs/demo.md`
+now says so.
+
+### Not verified — Phase 9 remains incomplete
+
+- **No hosted deployment.** No host, no public URL, no spending authorization requested or
+  given. HTTPS, `COOKIE_SECURE=true` and Caddy's automatic certificates are unexercised.
+- **No five-laptop physical rehearsal.** Five concurrent *clients* were soaked for five
+  minutes from one machine; that is not five people on five laptops on a venue network,
+  and it is not the 10–15 minute rehearsal section 13.2 asks for. **Pending.**
+- **No browser-based rehearsal of D01–D06 end to end against the Compose stack.** The
+  scenarios were verified against a dev server in Phase 8; `docs/demo.md` records those
+  numbers and names them as such.
+- **No real LLM call**, unchanged: no authorized provider key.
+
+---
+
 ## Phase 8 — essential integration checks
 
 **Date:** 2026-09-23

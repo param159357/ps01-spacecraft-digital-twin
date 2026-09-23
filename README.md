@@ -193,6 +193,16 @@ Set these in `.env` before bringing the stack up:
 On restart the run comes back **paused**; the simulator account resumes or resets it
 explicitly. Stopping containers does not delete stored data.
 
+This stack has been built and run: the API image applies its migrations and serves one
+Uvicorn worker, Caddy serves the export and proxies `/api`, a direct refresh of `/master/`
+returns 200, and SSE arrives through the proxy unbuffered at roughly one frame per second.
+`docker compose restart api` returns the run paused, and `docker compose down` preserved
+every stored run. See `docs/validation.md` for the measurements and `docs/demo.md` for the
+demonstration runbook and the offline fallback.
+
+It has **not** been deployed to a public host, so HTTPS, `COOKIE_SECURE=true` and automatic
+certificates remain unverified.
+
 ---
 
 ## Layout

@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | NOT_STARTED | None recorded here | Deploy and rehearse |
+| 9 | BLOCKED | `docs/validation.md` Phase 9: the Compose stack builds and runs — migrations apply at container start, Caddy serves the export with `/master/` surviving a direct refresh, proxied SSE arrives unbuffered at ~1 s, five clients soaked five minutes with 198 frames each and zero sequence gaps, restart returns the run PAUSED and `down` preserved 7,938 frames. `docs/demo.md` is a full D01–D06 runbook with an offline fallback | **Blocked on a deployment host.** No host chosen or authorized, so there is no deployed URL, no HTTPS and no `COOKIE_SECURE=true` check; the five-laptop rehearsal is also pending |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -919,6 +919,53 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 9 (partial)
+
+- Status: BLOCKED on a deployment host. Everything that does not need one was done and
+  measured; the hosted deployment and the five-laptop rehearsal are explicitly not done.
+- Implemented/files changed:
+  - `.env.example` — `APP_ORIGIN` now defaults to the Compose origin
+    (`http://localhost:8080`) instead of the Next dev server. The old default made every
+    sign-in through the documented deployment path fail as a cross-site request.
+  - `docs/demo.md` — replaced the Phase 1 skeleton with the real runbook: accounts and
+    password rotation, start-up and pre-flight, D01, D02, D03, D04, D04-with-a-failed-
+    isolator, D05 and D06 with the exact simulator preset and the values actually observed,
+    reset and stop, a troubleshooting table, and the offline LAN fallback.
+  - `README.md` — records that the Compose stack has now actually been built and run, and
+    states plainly what a hosted deployment would still leave unverified.
+- Checks actually run and results: `docker compose build api` produced `ps01-api:latest`
+  (402 MB, python:3.14-slim, non-root). The full stack came up and the API applied its
+  migrations and started one worker with zero error lines in its log. Through Caddy: `/`
+  and a direct refresh of `/master/` returned 200, `/api/health` 200, unauthenticated
+  `/api/incidents` 401, the session cookie HttpOnly and the CSRF cookie readable, and the
+  three security headers present. Proxied SSE was verified unbuffered — two clients saw
+  identical frames with 0.98–1.11 s arrivals and none under 0.2 s. A five-minute,
+  five-client soak delivered 198 frames to every client with zero gaps in sequence, p95
+  arrival 1.26–1.30 s, and exactly one arrival per client over 2 s (2.65–3.23 s, the same
+  tick on all five, so backend-side). `docker compose restart api` returned the run PAUSED;
+  `docker compose down` without `-v` preserved 7,938 frames and 13 runs. Over the LAN
+  address the static site and health answered while login returned 403 until `APP_ORIGIN`
+  matched — the fallback step is documented because of that observation. Full tables in
+  `docs/validation.md`.
+- Decisions/deviations from this specification: the phase was deliberately split rather
+  than abandoned. Section 14 warns against discovering hosting incompatibilities at the
+  end, and the deployment artifact had never been run; verifying it locally retires that
+  risk without a host. Recorded in `docs/decisions.md`.
+- Missing credentials or external checks: **a deployment host and any spending
+  authorization**. Also unchanged: no authorized AI provider key, so `LLM` mode is still
+  unvalidated.
+- Known limitations: no public URL, no HTTPS, no `COOKIE_SECURE=true` verification, no
+  automatic-certificate check. No five-laptop physical rehearsal and no 10–15 minute
+  rehearsal with five browsers — five concurrent clients from one machine is not the same
+  thing and is not claimed to be. D01–D06 were verified against a dev server in Phase 8,
+  not re-run end to end through the Compose stack in a browser.
+- Next exact task: choose a host and authorize any spend, then deploy, verify the five
+  account routes, direct refresh, streaming, the action flow and history through the
+  deployed URL with `COOKIE_SECURE=true`, and run the 10–15 minute five-laptop rehearsal.
+  Alternatively, if the demonstration will be given on a LAN, set `APP_ORIGIN` and
+  `SITE_ADDRESS` to the host machine's address and rehearse that path instead — the stack
+  is already proven to work that way apart from the origin setting.
 
 ### 2026-09-23 — Phase 8
 
