@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: Google Cloud confirmed the authorized Gemini key/model, function calling and a small response schema, but the sanitized Pydantic schema still returned 400. Gemini now receives fully inlined minimal schemas while strict post-response validation remains intact; the `.next-export` mount is also fixed. 132 backend tests, Ruff, TypeScript, export, Alembic and Compose validation pass. | Redeploy the latest correction; verify real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining deployed rehearsal. Physical five-laptop rehearsal remains pending. |
+| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts. 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation pass. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -919,6 +919,30 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-24 — Phase 9 (cross-run forecast correction)
+
+- Status: IN_PROGRESS. The confirmed stale forecast defect is fixed and locally
+  validated; hosted D02 re-verification remains pending. Phase 10 was not started.
+- Implemented/files changed:
+  - `backend/app/operations.py` — detects a run transition before adopting the new frame,
+    clears live estimate/forecast/cadence state, forecasts the first valid frame
+    immediately, and refuses to use a crossing from another run.
+  - `backend/app/api/operations.py` — `/forecasts/latest` returns unavailable unless the
+    forecast belongs to the runner's active run.
+  - `backend/tests/test_phase3.py` — regression covers old frame 2000, new frame 0,
+    immediate replacement, endpoint isolation and forecast-driven `ENERGY_RESERVE`.
+- Checks actually run and results: focused Phase 3 **6 passed**; full backend **133
+  passed** in 91.07 s; Ruff and TypeScript clean; frontend exported 9 routes; Alembic
+  found no drift; Compose configuration validated with no repository environment file.
+- Decisions/deviations: only in-memory live-run caches are cleared. Persisted forecasts,
+  incidents and other historical evidence are retained.
+- Missing external checks: deploy this commit and repeat hosted D02 from a newly reset
+  run; complete the previously pending Gemini/public deployment checks.
+- Known limitations: hosted re-verification and the physical five-laptop rehearsal remain
+  pending.
+- Next exact task: deploy the correction, verify `/forecasts/latest` reports the active
+  run from frame 0 and D02 opens normally, then continue Phase 9 only.
 
 ### 2026-09-24 — Phase 9 (hosted defect correction)
 

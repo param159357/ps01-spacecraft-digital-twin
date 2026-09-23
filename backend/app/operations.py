@@ -36,7 +36,7 @@ class OperationalService:
         self.latest_forecast = None
         self.proposals: dict[UUID, ActionProposal] = {}
         self.commands: dict[UUID, CommandRecord] = {}
-        self._last_forecast_frame = 0
+        self._last_forecast_frame: int | None = None
         self._command_start_load: dict[UUID, tuple[int, float]] = {}
         self._latest_frame: TelemetryFrame | None = None
 
@@ -55,18 +55,34 @@ class OperationalService:
             await self._enqueue_incident_change(incident.id, change)
 
     async def process_frame(self, frame: TelemetryFrame) -> None:
+        previous_run_id = self._latest_frame.run_id if self._latest_frame is not None else None
+        if previous_run_id is not None and previous_run_id != frame.run_id:
+            # Frame sequence numbers restart at zero for every run. Forecasts and observed
+            # estimates are live-run caches, so carrying either one across this boundary
+            # can suppress forecasting for thousands of frames and contaminate monitoring.
+            # Persisted forecast rows are historical evidence and are deliberately retained.
+            self.latest_forecast = None
+            self.latest_estimate = None
+            self._last_forecast_frame = None
         self._latest_frame = frame
         estimate = estimate_observed_state(frame, self.config.spacecraft)
         self.latest_estimate = estimate
         if estimate and (
-            self.latest_forecast is None or frame.frame_seq - self._last_forecast_frame >= 5
+            self.latest_forecast is None
+            or self.latest_forecast.run_id != frame.run_id
+            or self._last_forecast_frame is None
+            or frame.frame_seq - self._last_forecast_frame >= 5
         ):
             result = await asyncio.to_thread(forecast, estimate, self.config.spacecraft)
             self.latest_forecast = result
             self._last_forecast_frame = frame.frame_seq
             await asyncio.to_thread(self._persist_forecast, result)
             self.bus.publish(StreamEventType.FORECAST, result.model_dump(mode="json"), frame.run_id)
-        forecast_crossing = bool(self.latest_forecast and self.latest_forecast.crossings)
+        forecast_crossing = bool(
+            self.latest_forecast
+            and self.latest_forecast.run_id == frame.run_id
+            and self.latest_forecast.crossings
+        )
         changed = self.incident_engine.evaluate(frame, forecast_crossing)
         for incident in changed:
             change = await asyncio.to_thread(self._persist_incident, incident)

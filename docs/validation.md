@@ -17,6 +17,34 @@ The earlier Compose measurements below ran against the real local stack — `ps0
 image, Caddy and PostgreSQL — reached through Caddy on `http://localhost:8080`, not against
 a dev server.
 
+### 2026-09-24 cross-run forecast-cache correction
+
+Deployment evidence supplied before the fix: after D02 created run `88cf8d7e`, current
+telemetry was near frame 96 while `/forecasts/latest` still returned source frame 2000
+from the preceding run. Because the cadence calculation subtracted the old source frame
+from the reset frame sequence, no new forecast or forecast-driven `ENERGY_RESERVE`
+incident appeared.
+
+The regression drives an old run at frame 2000, switches the same service to a new run at
+frame 0, and verifies that the endpoint rejects the old-run forecast during the handoff,
+frame 0 immediately creates a new-run forecast and D02 opens `ENERGY_RESERVE` within the
+normal persistence interval. In-memory estimate/forecast/cadence state is cleared; no
+historical database rows are deleted.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Focused Phase 3 regression | **6 passed** in **0.25 s**, including old frame 2000 → new frame 0 and active-run API guard |
+| 2 | Full backend suite | isolated disposable test settings and local test database: **133 passed** in **91.07 s** |
+| 3 | Documented Ruff scope | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts`: **all checks passed** |
+| 4 | TypeScript | `npm exec tsc -- --noEmit`: exit 0 |
+| 5 | Frontend production export | `npm run build`: exit 0, **9 application routes** exported to `frontend/.next-export` |
+| 6 | Schema drift | Alembic check: **no new upgrade operations detected** |
+| 7 | Compose validation | `docker compose --env-file NUL config --quiet` with a temporary non-secret session placeholder: exit 0 |
+
+The corrected service has not yet been redeployed against the reported hosted run, so
+hosted D02 re-verification remains pending. The Gemini schema fix from `ba1a249` remains
+present and unchanged.
+
 ### 2026-09-24 hosted deployment defects and local correction
 
 Confirmed on the real deployment: the authorized Gemini key and exact model

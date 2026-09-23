@@ -150,7 +150,7 @@ async def compare(
 @router.get("/forecasts/latest", dependencies=[Depends(require_operational)])
 def latest_forecast(runner: SimulationRunner = Depends(get_runner)) -> dict[str, Any]:
     value = _service(runner).latest_forecast
-    if value is None:
+    if value is None or runner.run_id is None or value.run_id != runner.run_id:
         raise HTTPException(
             status_code=503,
             detail={

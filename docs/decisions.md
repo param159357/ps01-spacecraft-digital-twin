@@ -7,6 +7,16 @@ Newest first within each phase.
 
 ## Phase 9 — deployment stack, verified locally
 
+### Live observed-state and forecast caches are scoped to one run
+
+`frame_seq` restarts at zero when the simulator creates a new run. The operations service
+therefore clears its in-memory observed estimate, forecast and forecast-cadence marker
+when an incoming frame's `run_id` differs from the preceding frame, before adopting that
+frame. The first valid frame then forecasts immediately. Forecast crossings are used only
+when the cached forecast belongs to the frame's run, and `/forecasts/latest` returns
+unavailable rather than exposing a forecast whose run differs from the runner's active
+run. Persisted forecast rows remain intact as historical evidence.
+
 ### Gemini receives minimal manual schemas only at the provider boundary
 
 The real Gemini deployment proved that `gemini-3.5-flash`, the authorized key, manual

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException
+
+from app.api.operations import latest_forecast as get_latest_forecast
 from app.config.loader import load_configuration
 from app.contracts.actions import ActionProposal
 from app.contracts.common import Illumination, RunStatus, SourceKind
@@ -64,6 +69,64 @@ def test_payload_action_forecast_uses_same_observed_start_and_improves_reserve()
     assert action.series[0].values[-1] > baseline.series[0].values[-1]
     thermal = next(s for s in baseline.series if s.channel_id == "battery_temperature")
     assert len(thermal.values) == len(baseline.series[0].values)
+
+
+def test_new_run_immediately_replaces_high_sequence_forecast_and_can_open_d02(monkeypatch):
+    config = load_configuration()
+    service = OperationalService(config, SimpleNamespace(publish=lambda *args: None))
+    monkeypatch.setattr(service, "_persist_forecast", lambda result: None)
+    monkeypatch.setattr(service, "_persist_incident", lambda incident: ("INCIDENT_OPENED",))
+
+    old_run_id = uuid4()
+    new_run_id = uuid4()
+    base = _frame(extra_load_w=300.0)
+    values = {**base.values, "battery_soc": 20.1}
+    old_frame = base.model_copy(
+        update={"run_id": old_run_id, "frame_seq": 2000, "sim_time_s": 2000.0, "values": values}
+    )
+    asyncio.run(service.process_frame(old_frame))
+    old_forecast = service.latest_forecast
+    assert old_forecast is not None
+    assert old_forecast.run_id == old_run_id
+    assert old_forecast.source_frame_seq == 2000
+
+    # The runner switches run IDs before the first new frame reaches operations. During
+    # that gap the endpoint must not expose the previous run's otherwise valid forecast.
+    runner = SimpleNamespace(run_id=new_run_id, operations=service)
+    with pytest.raises(HTTPException) as unavailable:
+        get_latest_forecast(runner=runner)
+    assert unavailable.value.status_code == 503
+
+    first_new = base.model_copy(
+        update={"run_id": new_run_id, "frame_seq": 0, "sim_time_s": 0.0, "values": values}
+    )
+    asyncio.run(service.process_frame(first_new))
+    new_forecast = service.latest_forecast
+    assert new_forecast is not None
+    assert new_forecast.id != old_forecast.id
+    assert new_forecast.run_id == new_run_id
+    assert new_forecast.source_frame_seq == 0
+    assert service.latest_estimate is not None
+    assert service.latest_estimate.run_id == new_run_id
+    assert get_latest_forecast(runner=runner)["run_id"] == str(new_run_id)
+
+    for seq in range(1, 5):
+        frame = first_new.model_copy(
+            update={
+                "frame_seq": seq,
+                "sim_time_s": float(seq),
+                "received_at_utc": first_new.received_at_utc + timedelta(seconds=seq),
+            }
+        )
+        asyncio.run(service.process_frame(frame))
+
+    reserve = [
+        incident
+        for incident in service.incident_engine.incidents.values()
+        if incident.run_id == new_run_id and incident.rule_id == "ENERGY_RESERVE"
+    ]
+    assert len(reserve) == 1
+    assert max(reserve[0].source_frames) < 2000
 
 
 def test_continuing_supply_fault_is_one_incident_and_recovers_after_dwell():
