@@ -5,6 +5,55 @@ Newest first within each phase.
 
 ---
 
+## Phase 7 — bounded live investigator
+
+### One process owns one analysis worker
+
+`AnalysisService` owns a priority queue capped at ten pending jobs and exactly one worker.
+Critical incident work precedes warning/history work. Incident/revision keys suppress
+duplicates, a newer queued revision supersedes an older one, and automatic triggers have
+a 120 s cooldown. Deterministic incident publication happens before enqueueing, so the
+provider path cannot delay telemetry, forecasts or command outcome handling. This matches
+the existing single-API-process deployment contract; multiple API workers are unsupported.
+
+### Provider scope is fixed by the server, never selected by the model
+
+The provider sees only four function names. Their schemas accept no model-selected scope:
+the server fixes the incident ID, source dataset and limits. Recent telemetry is capped at
+five minutes and 60 frames, similar incidents at ten, and tools reject extra arguments.
+There is no arbitrary SQL, command, threshold, simulator or checkpoint tool. The final
+schema rejects extra fields, unknown citations and disabled action IDs.
+
+### OpenAI Responses is the sole optional provider integration
+
+The implementation uses the Responses REST contract directly through the standard
+library: one tool-selection response and one strict JSON-schema response, at most four
+tool calls, three total HTTP attempts, configured timeout/output tokens and `store:false`.
+No SDK dependency and no speculative Claude/second-provider adapter were added. A provider
+result is `LLM` only after schema and citation validation; all failures are `TEMPLATE`.
+
+### Budget reservations are conservative and failed calls count
+
+Before starting a provider job, the service requires room for the full maximum of three
+HTTP attempts. Actual attempts are persisted even when validation or transport fails and
+are included in the UTC-day total. This can leave a small unused remainder near the cap,
+which is preferable to starting a job that cannot finish within budget.
+
+### History requests use the same queue and exact-window cache
+
+Daily, weekly, monthly and custom reviews submit to the same worker and budget gate as
+incident investigations. The cache key includes the explicit dataset, period and exact
+UTC bounds, so LIVE/SYNTHETIC/REPLAY cannot collide. With no provider, the Phase 6
+deterministic renderer remains the saved `TEMPLATE` result.
+
+### Process restart defers orphaned work
+
+Provider calls are in memory and cannot be resumed safely after restart. Startup marks
+persisted `QUEUED` or `RUNNING` rows `DEFERRED` with `PROCESS_RESTART`; it never claims
+they completed, and a later matching request can enqueue fresh work.
+
+---
+
 ## Phase 6 — historical data and recurrence
 
 ### Historical code has a storage-only dependency boundary

@@ -5,6 +5,67 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 7 — bounded live investigator and periodic reviews
+
+**Date:** 2026-09-23
+**Environment:** Windows 11 Pro, Python 3.14.3, Node 24.19.0, PostgreSQL 17 using the
+existing Docker volume. AI disabled; no provider, model or authorized API key configured.
+
+### Executed checks
+
+| # | Check | Command / method | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `./.venv/Scripts/python.exe -m pytest -q` | **112 passed**, 0 failed, 77.27 s; two known non-failing warnings |
+| 2 | Phase 7 focused coverage | `./.venv/Scripts/python.exe -m pytest -q tests/test_phase7.py` | **5 passed**: contracts, queue/dedup/concurrency, role-scoped API, all fallbacks, queue/cooldown/trigger bounds |
+| 3 | Lint | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0**, no errors |
+| 5 | Static export | `npm run build` | **exit 0**; 9 application routes, 11 generated static pages including framework pages |
+| 6 | Schema drift | `./.venv/Scripts/python.exe -m alembic check` | **No new upgrade operations detected** |
+| 7 | Provider configuration audit | settings read without printing secrets | `AI_ENABLED=false`; provider absent; model absent; API key absent — real provider test correctly **not run** |
+| 8 | Fallback matrix | focused tests with bounded fake providers | missing key, timeout, malformed output, unsupported evidence citation and daily budget exhaustion all finish as honestly labelled `TEMPLATE` |
+| 9 | Queue controls | focused tests | pending limit 1 forced `QUEUE_FULL`; second revision inside cooldown forced `COOLDOWN`; non-allowlisted per-frame trigger rejected; maximum observed concurrent jobs **1** |
+| 10 | Restarted real API | D02 simulator preset → master manual investigate → poll `/api/analyses/{id}` | one `ENERGY_RESERVE WARNING`; analysis `COMPLETED`, mode `TEMPLATE`, fallback `PROVIDER_NOT_CONFIGURED`; one observation, two evidence tools |
+| 11 | Hidden-field scan | raw live analysis JSON | **0 hits** for `private_checkpoint`, `hidden_conditions`, `computer_resets`, `branch_stuck_on` or `isolator_failed` |
+| 12 | Browser master console | restarted Next dev server and Uvicorn, signed in locally | incident alert remained immediate; panel visibly showed `COMPLETED`, `TEMPLATE`, cached revision, cited observation, missing evidence, next checks and `get_incident_evidence → get_forecast_comparison` trail |
+| 13 | Final port/storage state | listener/TCP checks after stopping owned server PIDs | ports **3000/8000 free**; PostgreSQL remained reachable on 5432; no compose-down or volume-removal command used |
+
+### Acceptance criteria for Phase 7
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| New incidents can be investigated without delaying deterministic alerts | **Pass** | opening/escalation/failure trigger after persistence/publication; one background worker; live D02 and browser check |
+| Calls are bounded and not made each second | **Pass** | only four trigger values accepted; incident/revision cache, 120 s cooldown, pending cap 10, daily limit and one worker; test rejects a per-frame trigger |
+| Evidence tools/citations are visible and storage-only | **Pass** | UI trail and check 11; provider has only the four fixed Phase 6 functions and cannot choose incident/run scope |
+| Provider failures leave the demo functional | **Pass** | check 8; every tested failure completed through the deterministic TEMPLATE path |
+| AI cannot execute recovery or change thresholds | **Pass** | no mutation/command/SQL tool exists; supported action IDs are validated against configured enabled actions; UI states read-only |
+| Daily/weekly/monthly reviews share queue/cache | **Pass** | all resolved windows submit through `AnalysisService.enqueue_history`; exact source/window key deduplicates matching requests |
+| Live LLM integration is not overstated | **Pass** | no authorized key was configured, so no provider call was made and LLM mode is recorded as unverified |
+
+### Defects found and fixed during this phase
+
+1. **Failed recovery initially reused the opening revision.** A cached opening analysis
+   could therefore suppress the required failed-recovery investigation. Persisting a
+   measured command outcome now advances the linked incident evidence revision before the
+   `FAILED_RECOVERY` trigger is queued.
+2. **In-memory QUEUED rows could survive a process restart forever.** Startup now marks
+   orphaned queued/running rows `DEFERRED` with `PROCESS_RESTART`; a new request can create
+   a real job instead of polling an impossible one.
+3. **Failed provider attempts were initially absent from daily accounting.** TEMPLATE
+   fallbacks now persist the provider and actual attempt count, and the budget sums all
+   analyses rather than only successful `LLM` rows.
+
+### Known limitations after Phase 7
+
+- The OpenAI Responses path follows the official tool-calling and strict structured-output
+  contracts, but has not made a real provider request on this machine. It must remain
+  labelled unverified until an authorized API key and model are explicitly configured.
+- Queue/cooldown coordination is intentionally process-local because deployment requires
+  one API process. A multi-worker deployment would need a durable external queue/lock.
+- Period reviews are request-driven. Daily/weekly/monthly windows use the same bounded
+  path and cache, but no autonomous scheduler was requested or added.
+
+---
+
 ## Phase 6 — historical data and recurrence
 
 **Date:** 2026-09-23

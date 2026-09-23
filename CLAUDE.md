@@ -902,7 +902,7 @@ This delivered specification does not inspect or assert implementation status in
 | 4 | COMPLETE | `docs/validation.md` Phase 4: 91 backend tests pass; all 28 channels carry a model or a declared profile; link reports unavailable outside a scheduled pass; specialist incident lists are role-scoped; five consoles reviewed at 1366x768 and 1920x1080 | Phase 4 done |
 | 5 | COMPLETE | `docs/validation.md` Phase 5: 103 backend tests pass; D04 live gives IMPROVED with load 330.7 -> 179.7 W, and with a failed isolator gives APPLIED + NO_CHANGE with load unmoved; D03 escalates WARNING -> CRITICAL; no permanent-damage claim | Phase 5 done |
 | 6 | COMPLETE | `docs/validation.md` Phase 6: 107 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; real API/UI show 100% coverage and zero hidden-field hits | Phase 6 done |
-| 7 | NOT_STARTED | None recorded here | Live AI and period reviews |
+| 7 | COMPLETE | `docs/validation.md` Phase 7: 112 backend tests pass; one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; restarted real API/UI showed a cited `TEMPLATE` investigation with zero hidden-field hits. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | NOT_STARTED | None recorded here | Essential checks |
 | 9 | NOT_STARTED | None recorded here | Deploy and rehearse |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
@@ -919,6 +919,57 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 7
+
+- Status: COMPLETE. The bounded provider integration is implemented; live LLM validation
+  remains explicitly **not run**, because AI is disabled and no authorized API key or
+  model is configured. TEMPLATE fallback is the validated runtime mode on this machine.
+- Implemented/files changed:
+  - `analysis/service.py`, `analysis/provider.py`, `analysis/contracts.py` — one concurrent
+    worker, ten-job bounded priority queue, incident/revision deduplication, supersession,
+    120 s automatic cooldown, durable daily provider-attempt budget, strict structured
+    output/citation/action validation and an OpenAI Responses tool-calling path capped at
+    two responses, four tools and three HTTP attempts.
+  - `analysis/tools.py` — the four Phase 6 functions remain the sole investigator tool
+    surface; provider-selected scope is rejected, telemetry is limited to five minutes
+    and 60 downsampled frames, similar incidents are limited to ten and remain within the
+    target dataset.
+  - `operations.py`, `api/analysis.py`, `api/history.py`, `main.py` — automatic triggers
+    only for opening, severity escalation and failed recovery; role-scoped manual trigger;
+    persisted analysis polling/latest routes; daily/weekly/monthly/custom reviews use the
+    same queue, budget and exact-window cache. Deterministic incident publication still
+    occurs before enqueueing background analysis.
+  - `InvestigationPanel.tsx`, specialist/master incident panels and history page — queued,
+    cached, LLM/TEMPLATE/REPLAY-labelled results, observations, hypotheses, missing
+    evidence, supported actions, next checks and evidence trail.
+  - `tests/test_phase7.py` — role scope, allowlisted triggers, queue bound, cooldown,
+    deduplication, one-worker concurrency, missing-key, timeout, malformed output, bad
+    citation and exhausted-budget fallback coverage.
+- Checks actually run and results: 112 backend tests pass (77.27 s); Phase 7 focused tests
+  5 pass; Ruff clean; `npx tsc --noEmit` clean; static export succeeds (9 routes, 11
+  generated pages); `alembic check` reports no drift. A freshly restarted real Uvicorn
+  D02 flow produced one `ENERGY_RESERVE WARNING` incident and a `COMPLETED` `TEMPLATE`
+  analysis with one cited observation, two evidence-tool results and zero forbidden-field
+  hits. The browser master console visibly rendered the fallback label, cited observation,
+  missing evidence, next checks and evidence trail. Ports 3000/8000 were stopped after
+  verification; PostgreSQL remained reachable and its volume was untouched.
+- Decisions/deviations from this specification: provider calls use the OpenAI Responses
+  REST API directly so no new SDK dependency or speculative second provider was added.
+  Orphaned QUEUED/RUNNING rows become honestly `DEFERRED` after process restart instead of
+  pretending an in-memory call can resume. Exact history-window matches share the same
+  queue/cache but retain the Phase 6 deterministic renderer when the provider is absent.
+- Missing credentials or external checks: `AI_ENABLED=false`, provider/model blank and no
+  API key configured, so the conditional real-provider check was not run. ChatGPT/Claude
+  subscriptions were not treated as API authorization. Deployment remains unverified.
+- Known limitations: daily budgets and the queue coordinate one API process as required;
+  a multi-process deployment is unsupported. LLM mode must not be called validated until
+  a separately authorized provider key is configured and one real structured/tool call
+  succeeds. No scheduler daemon was added; review requests are queued on demand.
+- Next exact task: Phase 8 — run the essential cross-phase integration checks in section
+  13.2, including multiple browser sessions, disconnect/reconnect/reset, command
+  idempotency, hidden-truth exclusion, AI outage/fallback and history recurrence. See
+  `docs/handoff-phase8.md`.
 
 ### 2026-09-23 — Phase 6
 
