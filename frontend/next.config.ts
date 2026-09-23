@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 // `npm run build` sets NEXT_EXPORT=1 to produce the static export Caddy serves.
@@ -10,6 +11,11 @@ const apiProxyTarget = process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Pin the workspace root to this directory. Next otherwise walks upwards looking for a
+  // lockfile and can settle on an unrelated one outside the repository — a stray
+  // package-lock.json in the developer's home directory was being chosen, which makes
+  // output file tracing resolve against the wrong root and emits a warning every build.
+  outputFileTracingRoot: path.join(__dirname),
   // Fixed trailing-slash routes keep /master/ resolvable as a static file and make a
   // direct browser refresh work behind the reverse proxy.
   trailingSlash: true,
