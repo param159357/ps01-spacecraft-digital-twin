@@ -72,7 +72,7 @@ class SimulationRunner:
         self._last_publish_monotonic: float | None = None
         self.storage_error: str | None = None
         self.operations: Any | None = None
-        self._pending_commands: list[tuple[UUID, float]] = []
+        self._pending_commands: list[tuple[UUID, str, float]] = []
         self._queued_command_ids: set[UUID] = set()
 
     # ------------------------------------------------------------------ lifecycle
@@ -158,6 +158,7 @@ class SimulationRunner:
         seed: int | None = None,
         initial_soc_percent: float | None = None,
         initial_sim_time_s: float | None = None,
+        initial_payload_temperature_c: float | None = None,
     ) -> dict[str, Any]:
         """Start a brand-new run. Previous runs stay in the database untouched."""
         async with self._lock:
@@ -170,6 +171,11 @@ class SimulationRunner:
                 await asyncio.to_thread(self._checkpoint, self.run_id, self.truth)
             if initial_sim_time_s is not None:
                 self.truth.sim_time_s = initial_sim_time_s
+                await asyncio.to_thread(self._checkpoint, self.run_id, self.truth)
+            if initial_payload_temperature_c is not None:
+                # A visibly labelled starting condition, not a falsified timestamp:
+                # the run simply begins with the payload node already warm.
+                self.truth.temperatures_c["payload"] = initial_payload_temperature_c
                 await asyncio.to_thread(self._checkpoint, self.run_id, self.truth)
             self.status = RunStatus.PAUSED
         if previous is not None:
@@ -242,10 +248,16 @@ class SimulationRunner:
 
             applied_commands = self._pending_commands
             self._pending_commands = []
-            for _, duty in applied_commands:
-                self.truth.conditions = ConditionUpdate(payload_duty_percent=duty).apply_to(
-                    self.truth.conditions
-                )
+            for _, action_id, argument in applied_commands:
+                if action_id == "ISOLATE_OPTIONAL_BRANCH":
+                    # Command the isolator. Whether it actually opens is decided inside
+                    # the twin by hidden truth, so an APPLIED command can still fail to
+                    # change anything measurable.
+                    self.truth.branch_isolate_commanded = True
+                else:
+                    self.truth.conditions = ConditionUpdate(
+                        payload_duty_percent=argument
+                    ).apply_to(self.truth.conditions)
                 self.control_revision += 1
             self.truth, result = twin.step(self.config.spacecraft, self.truth, tick_s, self.seed)
 
@@ -298,7 +310,7 @@ class SimulationRunner:
 
         self.bus.publish(StreamEventType.TELEMETRY, frame.model_dump(mode="json"), run_id)
         if self.operations is not None:
-            for command_id, _ in applied_commands:
+            for command_id, _action_id, _argument in applied_commands:
                 self._queued_command_ids.discard(command_id)
                 load = frame.value_if_valid("load_power")
                 self.operations.mark_applied(
@@ -308,12 +320,22 @@ class SimulationRunner:
                 )
             await self.operations.process_frame(frame)
 
-    async def queue_payload_command(self, command_id: UUID, duty_percent: float) -> None:
-        """Queue an accepted command for the next simulation tick boundary."""
+    async def queue_command(
+        self, command_id: UUID, action_id: str, argument: float = 0.0
+    ) -> None:
+        """Queue an accepted command for the next simulation tick boundary.
+
+        The set of queued ids makes a duplicate approval a no-op, on top of the database
+        idempotency constraint.
+        """
         async with self._lock:
             if command_id not in self._queued_command_ids:
-                self._pending_commands.append((command_id, duty_percent))
+                self._pending_commands.append((command_id, action_id, argument))
                 self._queued_command_ids.add(command_id)
+
+    async def queue_payload_command(self, command_id: UUID, duty_percent: float) -> None:
+        """Backwards-compatible alias for the payload action."""
+        await self.queue_command(command_id, "REDUCE_PAYLOAD_POWER", duty_percent)
 
     async def _enter_storage_failure(self, message: str) -> None:
         async with self._lock:

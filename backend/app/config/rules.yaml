@@ -6,7 +6,7 @@
 #
 # All thresholds are starting test values for a fictional vehicle, not flight limits.
 
-config_version: "rules-0.2.0"
+config_version: "rules-0.3.0"
 
 defaults:
   healthy_dwell_s: 10.0        # missing data must never satisfy healthy dwell
@@ -69,7 +69,7 @@ rules:
     family: COMMAND_RESPONSE
     severity_default: WARNING
     subsystem: THERMAL_PROPULSION
-    implemented: false
+    implemented: true
     phase: 5
     description: Known command differs from observed state or power beyond the response allowance.
     params:

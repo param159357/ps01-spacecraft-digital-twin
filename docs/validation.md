@@ -5,6 +5,97 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 5 — major and delayed-intervention cases
+
+**Date:** 2026-09-23
+**Environment:** Windows 11 Pro, Python 3.14.3, Node 24.19.0, PostgreSQL 17 (Docker).
+
+### Executed checks
+
+| # | Check | Command / method | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `pytest -q` | **103 passed**, 0 failed, 58 s |
+| 2 | Phase 5 focused suite | `pytest tests/test_phase5.py -q` | **12 passed** |
+| 3 | Lint | `ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0** |
+| 5 | Static export | `npm run build` | **exit 0**, 9 routes |
+| 6 | Branch produces power *and* thermal evidence | `test_stuck_branch_raises_demand_and_heats_the_payload_node` | demand rises by exactly the rated 150 W; payload node warms from that same power |
+| 7 | Isolation removes load and heat | `test_isolation_removes_the_branch_load_and_its_heat` | demand falls and the payload temperature trend reverses |
+| 8 | Essential supply is never isolated | `test_isolation_never_touches_essential_supply` | essential demand and computer power preserved |
+| 9 | Isolation does not repair hardware | `test_software_isolation_does_not_repair_the_branch` | releasing the isolator brings the fault straight back |
+| 10 | Failed isolator changes nothing | `test_a_failed_isolator_applies_the_command_and_changes_nothing` | commanded true, effective false, demand unchanged |
+| 11 | Outage is irreversible | `test_payload_outage_accumulates_and_cannot_be_undone` | lost seconds persist after full recovery |
+| 12 | No permanent battery damage claim | `test_low_battery_alone_does_not_claim_permanent_damage` | a drained battery recharges normally; no damage state exists |
+| 13 | ACTUATOR_MISMATCH uses observations only | `test_actuator_mismatch_needs_only_observations_and_known_commands` | fires from a known command plus a measured channel, after persistence |
+| 14 | Mismatch stays quiet when consistent | `test_actuator_mismatch_stays_quiet_when_command_and_observation_agree` | no incident when command and observation agree |
+| 15 | Isolation forecast starts from the same state | `test_isolation_forecast_projects_the_branch_load_away` | identical source frame and initial SOC; isolated path ends higher; assumption stated |
+| 16 | Only enabled actions are offered | `test_only_enabled_actions_may_be_offered` | exactly the two implemented actions |
+| 17 | **D04 live, isolator responds** | full HTTP flow: simulator preset → master compare → approve → observe | `THERMAL_LIMIT WARNING` on `payload_temperature`; forecast **15.2 % no action vs 22.9 % isolated**; command `ACCEPTED` → `APPLIED`; outcome **IMPROVED**; measured load **330.7 → 179.7 W** (−151 W against a rated 150 W) |
+| 18 | **D04 live, isolator failed** | same flow with `isolator_failed` injected | identical evidence and projection; command `ACCEPTED` → `APPLIED`; outcome **NO_CHANGE**; measured load **330.7 → 329.7 W** (unmoved) |
+| 19 | Duplicate approval applies once | same driver, same idempotency key twice | second approval returned the same command record in both runs |
+| 20 | **D03 live escalation** | simulator D03 preset, no operator action | `ENERGY_RESERVE` observed at both **WARNING and CRITICAL**; SOC fell to 8.5 % |
+| 21 | **D03 live to the outage** | drained to empty in eclipse, then fully recovered | at SOC 0.09 %: **served 0 W, unmet 400 W, shed `payload`, computer unpowered**; payload operation lost **6 s** and still **18 s** after the load was removed and the battery recovered — the counter only ever increased |
+| 22 | Load shedding still publishes a frame | `test_load_shedding_still_produces_a_valid_frame` | frame builds and serializes while loads are shed and a reset is recorded (regression guard, see defects) |
+| 23 | Coverage flags match implementations | `test_coverage_endpoint_reports_what_actually_works` | 6 rules implemented, 2 actions enabled; the other 4 rules still declared false |
+
+### Acceptance criteria for Phase 5
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| D04 improves after a supported action | **Pass** | check 17 — measured load fell by the branch's rated power and the outcome was `IMPROVED` |
+| A genuinely unresponsive action reports failure | **Pass** | check 18 — `APPLIED` with outcome `NO_CHANGE`, and the master console states that recovery failed |
+| D03 does not falsely claim permanent battery damage | **Pass** | check 12 — no damage state exists and a drained battery recharges; the recorded consequence is lost payload operating time |
+| All heat and power changes have a modelled cause | **Pass** | check 6 — the payload node warms from the branch's own declared power share, not a placed offset |
+
+### Defects found and fixed during this phase
+
+1. **Telemetry stopped publishing the moment any load was shed.** `TelemetryFrame.engineering`
+   was typed `float | bool | int | None`, but two entries carry short labels —
+   `shed_loads` (the names of loads currently shed) and `reset_events_s`. Both are `None`
+   until something is actually shed or a reset actually occurs, so frame construction
+   raised a `ValidationError` on the very first load-shedding tick. The loop caught it
+   per-tick and carried on, so the **simulation kept advancing while every console froze
+   on its last frame** — observed live with truth at `sim_time` 4111 s against a frame
+   stuck at 3956 s, exactly the 155 s the outage had been running.
+
+   This is a Phase 2 defect that survived three phases because no test had ever driven
+   the system into real load shedding *through the observation path*; the model-level
+   shedding tests never built a frame. It would have fired during D03 in front of an
+   audience, at the worst possible moment.
+
+   Fixed by introducing `EngineeringValue`, which admits a label, while keeping the
+   NaN/Infinity rejection for numeric entries via a new validator.
+   `test_load_shedding_still_produces_a_valid_frame` now drives the twin into shedding
+   *and* a reset, then builds and serializes a frame, so a numeric-only engineering
+   payload cannot come back.
+
+2. **The first live outage verification reported a false negative.** It read
+   `payload_outage_s` from the published frame, which was frozen by defect 1, and so
+   reported `0.0 s` of lost operation while the simulator's own truth showed 155 s. The
+   result was discarded and the check re-run against the fixed build rather than
+   recorded.
+
+### Known limitations after Phase 5
+
+- **Reaching the outage takes real time.** From the D03 preset the battery needs several
+  minutes to drain to the point where load shedding drops the payload — which is the
+  point of a *delayed*-intervention case. Check 21 drove it there from a deliberately
+  low start; a demo-day walkthrough should either start low or narrate the wait.
+- **`ACTUATOR_MISMATCH` covers the heater only.** The branch isolator's failure surfaces
+  through the command outcome rather than a dedicated rule, because `load_power` alone
+  does not let a ground rule separate the branch's contribution from total demand.
+- **Three rules remain unimplemented** — `PRESSURE_INCONSISTENCY`,
+  `FLIGHT_PROFILE_DEVIATION` and `RESET_RECURRENCE`. Reported honestly by
+  `/api/config/coverage`.
+- **Scenario presets use labelled starting conditions** near the relevant boundary so each
+  case reaches its evidence inside a demo window. This is permitted by section 7.1 and is
+  stated on the simulator console, but it does mean the scenarios do not begin from a
+  neutral vehicle state.
+- **Deployment remains unverified** beyond the database container — unchanged since
+  Phase 1.
+
+---
+
 ## Phase 4 — five mission-control dashboards
 
 **Date:** 2026-09-23

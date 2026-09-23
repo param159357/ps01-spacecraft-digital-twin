@@ -24,6 +24,9 @@ router = APIRouter(tags=["operations"])
 
 
 class CompareRequest(BaseModel):
+    """Which implemented alternative to compare against the no-action baseline."""
+
+    action_id: str = Field(default="REDUCE_PAYLOAD_POWER")
     duty_percent: int = Field(default=0)
 
 
@@ -115,7 +118,7 @@ async def compare(
     role: Role = Depends(current_role),
     runner: SimulationRunner = Depends(get_runner),
 ) -> dict[str, Any]:
-    if body.duty_percent not in (0, 50, 100):
+    if body.action_id == "REDUCE_PAYLOAD_POWER" and body.duty_percent not in (0, 50, 100):
         raise HTTPException(
             status_code=422,
             detail={
@@ -137,7 +140,7 @@ async def compare(
             },
         )
     try:
-        return await _service(runner).compare(incident_id, body.duty_percent)
+        return await _service(runner).compare(incident_id, body.duty_percent, body.action_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=503, detail={"error": "FORECAST_UNAVAILABLE", "message": str(exc)}
@@ -176,8 +179,10 @@ async def submit_command(
             status_code=409, detail={"error": "PROPOSAL_CONFLICT", "message": str(exc)}
         ) from exc
     if record.status.value == "ACCEPTED":
-        await runner.queue_payload_command(
-            record.id, float(record.action_arguments["duty_percent"])
+        await runner.queue_command(
+            record.id,
+            record.action_id,
+            float(record.action_arguments.get("duty_percent", 0.0)),
         )
     return record.model_dump(mode="json")
 

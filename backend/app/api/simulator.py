@@ -35,6 +35,8 @@ class RunCommand(BaseModel):
     seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
     initial_soc_percent: float | None = Field(default=None, ge=5.0, le=95.0)
     initial_sim_time_s: float | None = Field(default=None, ge=0.0, lt=5400.0)
+    # Bounded, labelled starting condition for the thermal scenario.
+    initial_payload_temperature_c: float | None = Field(default=None, ge=-10.0, le=54.0)
 
 
 @router.post("/run", dependencies=[Depends(require_simulator), Depends(require_csrf)])
@@ -51,6 +53,7 @@ async def run_control(
             seed=command.seed,
             initial_soc_percent=command.initial_soc_percent,
             initial_sim_time_s=command.initial_sim_time_s,
+            initial_payload_temperature_c=command.initial_payload_temperature_c,
         )
     except RunnerError as exc:
         raise HTTPException(

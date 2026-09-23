@@ -91,6 +91,38 @@ class IncidentEngine:
                     "V",
                 )
             )
+        # ACTUATOR_MISMATCH: what the ground commanded against what it observes.
+        # Both sides are legitimately available — the commanded thermostat state is a
+        # known command in frame context, and heater power is a measured channel — so
+        # this needs no access to simulator truth. It reports a discrepancy; it does not
+        # claim to know whether the actuator, its sensor or the command path is at fault.
+        heater_w = frame.value_if_valid("heater_power")
+        commanded_on = frame.context.known_commands.get("heater_commanded_on")
+        rule = self.config.rules.by_id("ACTUATOR_MISMATCH")
+        if isinstance(heater_w, (int, float)) and isinstance(commanded_on, bool) and rule:
+            tolerance = float(rule.params.get("power_tolerance_w", 5.0))
+            rated = self.config.spacecraft.power.heater_rated_w
+            observed_on = float(heater_w) > tolerance
+            bad = observed_on != commanded_on
+            detail = (
+                f"Heater commanded {'ON' if commanded_on else 'OFF'} but drawing "
+                f"{float(heater_w):.1f} W against a rated {rated:.0f} W."
+            )
+            signals.append(
+                (
+                    "ACTUATOR_MISMATCH",
+                    "COMMAND_RESPONSE",
+                    "battery_heater",
+                    Subsystem.THERMAL_PROPULSION,
+                    Severity.WARNING,
+                    bad,
+                    detail,
+                    "heater_power",
+                    float(heater_w),
+                    "W",
+                )
+            )
+
         for channel in (
             "battery_temperature",
             "payload_temperature",

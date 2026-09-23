@@ -183,7 +183,8 @@ def test_channel_visibility_is_filtered_by_role(client):
     assert "wheel_speed" not in power_channels
 
 
-def test_coverage_reports_phase3_implementation(client):
+def test_coverage_endpoint_reports_what_actually_works(client):
+    """The UI reads these flags, so an overstated flag makes every console lie."""
     login(client, "master")
     body = client.get("/api/config/coverage").json()
     assert {rule["id"] for rule in body["rules"] if rule["implemented"]} == {
@@ -191,10 +192,12 @@ def test_coverage_reports_phase3_implementation(client):
         "GENERATION_SHORTFALL",
         "ENERGY_RESERVE",
         "THERMAL_LIMIT",
+        "ACTUATOR_MISMATCH",
         "SUPPLY_SHORTAGE",
     }
     assert {action["id"] for action in body["actions"] if action["enabled"]} == {
-        "REDUCE_PAYLOAD_POWER"
+        "REDUCE_PAYLOAD_POWER",
+        "ISOLATE_OPTIONAL_BRANCH",
     }
     assert body["executable_by_this_role"] is True
 

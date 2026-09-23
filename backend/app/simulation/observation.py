@@ -240,6 +240,9 @@ def observe(
         known_commands={
             **truth.conditions.known_commands,
             "heater_commanded_on": result.heater_commanded_on,
+            # The ground knows it commanded isolation. Whether the isolator obeyed
+            # is not a command — it has to be inferred from observations.
+            "branch_isolate_commanded": result.branch_isolate_commanded,
         },
     )
 
@@ -265,6 +268,8 @@ def observe(
             "payload_served_w": round(result.payload_served_w, 2),
             "shed_loads": ", ".join(electrical.shed) if electrical.shed else None,
             "computer_powered": result.computer_powered,
+            # Measured consequence that no later action can undo.
+            "payload_outage_s": round(result.payload_outage_s, 1),
             # Stated denominator for packet_error_rate, and the timestamped reset
             # events that sit beside the cumulative counter (section 7.5).
             "packets_attempted_window": result.packets_attempted_window,

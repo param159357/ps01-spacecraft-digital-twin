@@ -22,8 +22,14 @@ from .common import Illumination, OperatingMode, QualityState, RunStatus, Source
 
 ChannelValue = float | bool | int | None
 
+# Engineering detail is not a telemetry channel, so it may also carry a short label:
+# the names of loads currently shed, or the times of reset events. Those entries are
+# None most of the time, which is exactly why typing this as numeric-only stayed
+# latent until the first real load-shedding event stopped the whole stream.
+EngineeringValue = float | bool | int | str | None
 
-def _reject_non_finite(value: ChannelValue) -> ChannelValue:
+
+def _reject_non_finite(value: EngineeringValue) -> EngineeringValue:
     if isinstance(value, float) and not math.isfinite(value):
         raise ValueError("NaN and Infinity must never appear in telemetry JSON; use null")
     return value
@@ -86,7 +92,7 @@ class TelemetryFrame(BaseModel):
     context: FrameContext
     # Derived engineering detail that is not part of the 28-channel dictionary — for
     # example served and unmet power beside the requested `load_power` channel.
-    engineering: dict[str, ChannelValue] = Field(default_factory=dict)
+    engineering: dict[str, EngineeringValue] = Field(default_factory=dict)
 
     @field_validator("values")
     @classmethod
@@ -96,6 +102,16 @@ class TelemetryFrame(BaseModel):
                 _reject_non_finite(value)
             except ValueError as exc:
                 raise ValueError(f"channel {key}: {exc}") from exc
+        return v
+
+    @field_validator("engineering")
+    @classmethod
+    def _finite_engineering(cls, v: dict[str, EngineeringValue]) -> dict[str, EngineeringValue]:
+        for key, value in v.items():
+            try:
+                _reject_non_finite(value)
+            except ValueError as exc:
+                raise ValueError(f"engineering {key}: {exc}") from exc
         return v
 
     def value_if_valid(self, channel_id: str) -> ChannelValue:

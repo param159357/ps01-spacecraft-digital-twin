@@ -100,16 +100,32 @@ def test_thermal_limits_are_not_copied_between_nodes(config):
 
 
 def test_rules_and_actions_report_honest_coverage(config):
-    """Coverage exposes only rules/actions with Phase 3 implementations and tests."""
+    """Coverage exposes only rules and actions that are actually implemented and tested.
+
+    Section 8.1 names the first six rules as the core demonstration set; Phase 5 completed
+    that set by adding ACTUATOR_MISMATCH. The remaining four stay false until they exist.
+    """
     assert len(config.rules.rules) == 10
     assert config.rules.implemented_ids == (
         "DATA_STALE",
         "GENERATION_SHORTFALL",
         "ENERGY_RESERVE",
         "THERMAL_LIMIT",
+        "ACTUATOR_MISMATCH",
         "SUPPLY_SHORTAGE",
     )
-    assert config.actions.enabled_ids == ("REDUCE_PAYLOAD_POWER",)
+    assert config.actions.enabled_ids == (
+        "REDUCE_PAYLOAD_POWER",
+        "ISOLATE_OPTIONAL_BRANCH",
+    )
+    # Still unimplemented, and still declared as such.
+    for rule_id in (
+        "PRESSURE_INCONSISTENCY",
+        "FLIGHT_PROFILE_DEVIATION",
+        "RESET_RECURRENCE",
+        "SENSOR_INCONSISTENCY",
+    ):
+        assert config.rules.by_id(rule_id).implemented is False
 
     core_demo_actions = {"REDUCE_PAYLOAD_POWER", "ISOLATE_OPTIONAL_BRANCH"}
     assert core_demo_actions <= {a.id for a in config.actions.actions}

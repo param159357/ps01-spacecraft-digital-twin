@@ -900,7 +900,7 @@ This delivered specification does not inspect or assert implementation status in
 | 2 | COMPLETE | `docs/validation.md` Phase 2: 74 backend tests pass; 52.6316 Wh energy reference and analytic thermal response verified; two live SSE clients observed identical frames 27–33; reset, pause, truth isolation and contact-loss staleness checked in a browser | Phase 2 done |
 | 3 | COMPLETE | `docs/validation.md` Phase 3: 79 backend tests pass; D01 eclipse opens no false incident; D02 projects 19.7% vs 23.9%, applies once, and measured load falls 380.3 → 299.6 W with `IMPROVED` outcome | Phase 3 done |
 | 4 | COMPLETE | `docs/validation.md` Phase 4: 91 backend tests pass; all 28 channels carry a model or a declared profile; link reports unavailable outside a scheduled pass; specialist incident lists are role-scoped; five consoles reviewed at 1366x768 and 1920x1080 | Phase 4 done |
-| 5 | NOT_STARTED | None recorded here | Major and delayed-response cases |
+| 5 | COMPLETE | `docs/validation.md` Phase 5: 103 backend tests pass; D04 live gives IMPROVED with load 330.7 -> 179.7 W, and with a failed isolator gives APPLIED + NO_CHANGE with load unmoved; D03 escalates WARNING -> CRITICAL; no permanent-damage claim | Phase 5 done |
 | 6 | NOT_STARTED | None recorded here | Historical recurrence |
 | 7 | NOT_STARTED | None recorded here | Live AI and period reviews |
 | 8 | NOT_STARTED | None recorded here | Essential checks |
@@ -919,6 +919,65 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 5
+
+- Status: COMPLETE.
+- Implemented/files changed:
+  - `config/spacecraft.yaml`, `config/loader.py` — `power.optional_branch`: a modelled
+    optional load with a rated power and a declared share of its heat reaching the
+    payload node. `spacecraft-0.5.0`, model `twin-0.5.0`.
+  - `simulation/truth.py`, `twin.py` — hidden `branch_stuck_on` and `isolator_failed`
+    injections; `branch_isolate_commanded` as commanded state; branch demand and branch
+    heat; and `payload_outage_s`, the irreversible count of simulated seconds where
+    payload operation was commanded but not served.
+  - `monitoring/engine.py` — `ACTUATOR_MISMATCH` comparing the known commanded heater
+    state against measured heater power, with no access to simulator truth.
+  - `forecasts/engine.py`, `operations.py`, `api/operations.py` — comparison generalised
+    to any enabled action; `ISOLATE_OPTIONAL_BRANCH` projects the branch's rated power
+    away and states that it assumes the isolator responds.
+  - `simulation/runner.py` — the tick-boundary command queue now carries an action id, so
+    isolation and payload reduction both apply at a tick boundary.
+  - `config/rules.yaml`, `actions.yaml` — `ACTUATOR_MISMATCH` implemented and
+    `ISOLATE_OPTIONAL_BRANCH` enabled, completing the six core rules and both core-demo
+    actions. `rules-0.3.0`, `actions-0.3.0`.
+  - Frontend: master panel offers both actions, shows outcome paths, and states plainly
+    when a command applied but recovery failed; simulator gains branch and isolator
+    toggles plus D03, D04 and "D04 with a failed isolator" presets.
+- Checks actually run and results: 103 backend tests pass (58 s); 12 focused Phase 5
+  tests; ruff clean; `tsc --noEmit` clean; `npm run build` exports 9 routes. Driven
+  end to end through the real HTTP API: D04 with a working isolator opened
+  `THERMAL_LIMIT` on `payload_temperature`, projected 15.2% no-action against 22.9%
+  isolated, and after approval reported `IMPROVED` with measured load 330.7 -> 179.7 W;
+  the same scenario with the isolator failed reported `APPLIED` then `NO_CHANGE` with
+  load unmoved at 329.7 W. A duplicate approval returned the same command record in both
+  runs. D03 escalated `ENERGY_RESERVE` from WARNING to CRITICAL with no operator action,
+  and taken to its conclusion reached served 0 W / unmet 400 W with the payload shed and
+  6 s of payload operation lost, still 18 s after full recovery — the counter never
+  decreased. Full table in `docs/validation.md`.
+- Defect found and fixed: `TelemetryFrame.engineering` was typed numeric-only while
+  `shed_loads` and `reset_events_s` carry labels. Both are None until something is
+  actually shed or a reset actually happens, so the first real load-shedding tick threw
+  and telemetry stopped reaching every console while the simulation kept advancing — a
+  Phase 2 defect that survived three phases because no test drove shedding through the
+  observation path. Fixed with an `EngineeringValue` type plus a regression test.
+- Decisions/deviations from this specification: the irreversible consequence is lost
+  payload operating time rather than battery damage, because section 13.1 forbids
+  claiming permanent damage from low charge and the model has no damage state;
+  `ACTUATOR_MISMATCH` covers the heater only, since `load_power` alone cannot separate
+  the branch's contribution from total demand, and the isolator's failure instead
+  surfaces through the command outcome. Recorded in `docs/decisions.md`.
+- Missing credentials or external checks: unchanged — no AI provider, no deployment host.
+- Known limitations: reaching the D03 outage takes several minutes of draining, so a
+  demo either starts low or narrates the wait; `PRESSURE_INCONSISTENCY`, `FLIGHT_PROFILE_DEVIATION` and
+  `RESET_RECURRENCE` remain unimplemented; scenario presets begin from labelled starting
+  conditions near the relevant boundary rather than a neutral vehicle state.
+- Next exact task: Phase 6 — stored history and recurring-pattern evidence. Store
+  incident, command and outcome events with bounded historical queries; generate a cached
+  labelled synthetic month with a recurring schedule mismatch and clean comparison
+  periods; compute daily, weekly and monthly counts, duration and coverage; build period
+  and source selection; and implement the deterministic report template plus the
+  read-only investigator tool functions.
 
 ### 2026-09-23 — Phase 4
 

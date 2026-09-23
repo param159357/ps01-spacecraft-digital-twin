@@ -70,6 +70,12 @@ function EngineeringDetail({ engineering }: { engineering: Record<string, unknow
       {typeof engineering.shed_loads === "string" && engineering.shed_loads ? (
         <p className="text-xs text-warning">Load shedding active: {engineering.shed_loads}</p>
       ) : null}
+      {typeof engineering.payload_outage_s === "number" && engineering.payload_outage_s > 0 ? (
+        <p className="rounded border border-critical/40 bg-critical/10 px-2 py-1.5 text-xs text-critical">
+          Payload operation lost: {engineering.payload_outage_s.toFixed(0)} s. This time is
+          already gone — a recovery approved now restores the payload but cannot return it.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -47,6 +47,12 @@ class StepResult:
     packets_failed_window: int
     reset_count: int
     reset_events_s: tuple[float, ...]
+    # Optional branch and its isolator (section 9.2).
+    branch_energised: bool
+    branch_w: float
+    branch_isolate_commanded: bool
+    branch_isolation_effective: bool
+    payload_outage_s: float
 
 
 def _heater_thermostat(config: SpacecraftConfig, battery_c: float, currently_on: bool) -> bool:
@@ -91,11 +97,20 @@ def step(
     payload_duty = 0.0 if conditions.mode is OperatingMode.SAFE else conditions.payload_duty_percent
     payload_request_w = power.payload_nominal_w * payload_duty / 100.0
 
+    # The optional branch is energised when it has failed on and the isolator has not
+    # actually opened. Commanding isolation is not the same as the isolator obeying:
+    # an injected isolator failure leaves the branch drawing power after an APPLIED
+    # command, which is what makes "accepted is not recovered" demonstrable.
+    branch = power.optional_branch
+    branch_isolation_effective = truth.branch_isolate_commanded and not conditions.isolator_failed
+    branch_energised = conditions.branch_stuck_on and not branch_isolation_effective
+    branch_w = branch.rated_w if branch_energised else 0.0
+
     load = LoadRequest(
         essential_w=power.essential_load_w,
         payload_w=payload_request_w,
         heater_w=power.heater_rated_w if heater_actual_on else 0.0,
-        fault_load_w=conditions.extra_load_w,
+        fault_load_w=conditions.extra_load_w + branch_w,
     )
 
     electrical = models.step_electrical(
@@ -139,7 +154,10 @@ def step(
         "computer": (
             float(getattr(nodes["computer"], "nominal_w", 15.0)) if computer_powered else 0.0
         ),
-        "payload": payload_served_w * float(getattr(nodes["payload"], "fraction", 0.35)),
+        # Payload electronics heat, plus the branch's share when it is energised.
+        # Every watt of heat here has a modelled electrical source.
+        "payload": payload_served_w * float(getattr(nodes["payload"], "fraction", 0.35))
+        + branch_w * branch.heat_fraction_to_payload,
         "tank": float(getattr(nodes["tank"], "nominal_w", 2.0)),
         "thruster": (
             float(getattr(nodes["thruster"], "valve_open_w", 6.0)) if truth.valve_open else 0.0
@@ -184,6 +202,12 @@ def step(
         resets_applied += 1
         reset_events_s.append(next_sim_time_s)
 
+    # Payload operation that was commanded but not served is lost time. It accumulates
+    # irreversibly: a recovery approved later cannot give these seconds back.
+    payload_outage_s = truth.payload_outage_s
+    if payload_duty > 0.0 and payload_served_w <= 0.0:
+        payload_outage_s += dt_s
+
     next_truth = SimulatorTruth(
         energy_wh=electrical.next_energy_wh,
         temperatures_c=next_temps,
@@ -196,6 +220,8 @@ def step(
         packet_window=packet_window,
         resets_applied=resets_applied,
         reset_events_s=reset_events_s,
+        branch_isolate_commanded=truth.branch_isolate_commanded,
+        payload_outage_s=payload_outage_s,
     )
 
     result = StepResult(
@@ -226,5 +252,10 @@ def step(
         packets_failed_window=window_failed,
         reset_count=resets_applied,
         reset_events_s=tuple(reset_events_s),
+        branch_energised=branch_energised,
+        branch_w=branch_w,
+        branch_isolate_commanded=truth.branch_isolate_commanded,
+        branch_isolation_effective=branch_isolation_effective,
+        payload_outage_s=payload_outage_s,
     )
     return next_truth, result

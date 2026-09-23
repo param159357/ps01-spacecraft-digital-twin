@@ -27,7 +27,13 @@ interface Forecast {
 interface Comparison {
   baseline: Forecast;
   action: Forecast;
-  proposal: { id: string; expires_at_utc: string; trade_off: string };
+  proposal: {
+    id: string;
+    expires_at_utc: string;
+    trade_off: string;
+    action_id: string;
+    outcome_paths: string[];
+  };
 }
 
 interface Command {
@@ -72,11 +78,17 @@ export function Phase3Operations() {
     return () => window.clearInterval(id);
   }, [refresh]);
 
-  async function compare(incidentId: string) {
+  async function compare(incidentId: string, actionId: string) {
     setBusy(true);
     setError(null);
+    setCommand(null);
     try {
-      setComparison(await api.post<Comparison>(`/incidents/${incidentId}/compare`, { duty_percent: 0 }));
+      setComparison(
+        await api.post<Comparison>(`/incidents/${incidentId}/compare`, {
+          action_id: actionId,
+          duty_percent: 0,
+        }),
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Comparison failed.");
     } finally {
@@ -117,9 +129,23 @@ export function Phase3Operations() {
             </div>
             <p className="text-ink-dim">{active.observed_evidence.at(-1)?.text}</p>
             <p className="tnum text-ink-faint">ID {active.id.slice(0, 8)}</p>
-            <button className="rounded border border-accent px-2 py-1 text-accent disabled:opacity-40" disabled={busy} onClick={() => void compare(active.id)}>
-              Compare payload reduction
-            </button>
+            {/* Only actions the backend reports as enabled are offered here. */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                className="rounded border border-accent px-2 py-1 text-accent disabled:opacity-40"
+                disabled={busy}
+                onClick={() => void compare(active.id, "REDUCE_PAYLOAD_POWER")}
+              >
+                Compare payload reduction
+              </button>
+              <button
+                className="rounded border border-accent px-2 py-1 text-accent disabled:opacity-40"
+                disabled={busy}
+                onClick={() => void compare(active.id, "ISOLATE_OPTIONAL_BRANCH")}
+              >
+                Compare branch isolation
+              </button>
+            </div>
           </div>
         ) : <p className="text-xs text-ink-faint">No active incident. Load D02 from the simulator.</p>}
       </Panel>
@@ -128,8 +154,20 @@ export function Phase3Operations() {
         {comparison ? (
           <div className="space-y-2 text-xs">
             <p className="flex justify-between"><span className="text-ink-dim">No action reserve</span><span className="tnum">{endSoc(comparison.baseline)}</span></p>
-            <p className="flex justify-between"><span className="text-ink-dim">Payload 0% reserve</span><span className="tnum text-nominal">{endSoc(comparison.action)}</span></p>
+            <p className="flex justify-between">
+              <span className="text-ink-dim">
+                {comparison.proposal.action_id === "ISOLATE_OPTIONAL_BRANCH"
+                  ? "After isolating branch"
+                  : "Payload 0% reserve"}
+              </span>
+              <span className="tnum text-nominal">{endSoc(comparison.action)}</span>
+            </p>
             <p className="text-warning">Trade-off: {comparison.proposal.trade_off}</p>
+            <ul className="list-disc space-y-0.5 pl-4 text-ink-faint">
+              {comparison.proposal.outcome_paths.map((path) => (
+                <li key={path}>{path}</li>
+              ))}
+            </ul>
           </div>
         ) : forecast ? (
           <div className="space-y-2 text-xs text-ink-dim">
@@ -143,15 +181,30 @@ export function Phase3Operations() {
 
       <Panel title="Approval and outcome" subtitle="Master-only predefined action">
         {comparison && !command ? (
-          <button className="rounded border border-accent bg-accent/10 px-3 py-1.5 text-xs text-accent disabled:opacity-40" disabled={busy} onClick={() => void approve()}>
-            Approve payload duty 0%
+          <button
+            className="rounded border border-accent bg-accent/10 px-3 py-1.5 text-xs text-accent disabled:opacity-40"
+            disabled={busy}
+            onClick={() => void approve()}
+          >
+            {comparison.proposal.action_id === "ISOLATE_OPTIONAL_BRANCH"
+              ? "Approve branch isolation"
+              : "Approve payload duty 0%"}
           </button>
         ) : null}
         {command ? (
           <div className="space-y-2 text-xs">
             <StatusBadge tone={command.observed_outcome === "IMPROVED" ? "nominal" : "warning"}>{command.status}</StatusBadge>
             <p className="text-ink-dim">Outcome: <span className="text-ink">{command.observed_outcome}</span></p>
-            <p className="text-ink-faint">{command.outcome_detail ?? "Waiting for post-command observations."}</p>
+            <p className="text-ink-faint">
+              {command.outcome_detail ?? "Waiting for post-command observations."}
+            </p>
+            {command.observed_outcome === "NO_CHANGE" ? (
+              <p className="rounded border border-warning/40 bg-warning/10 px-2 py-1.5 text-warning">
+                Recovery failed. The command was accepted and applied, but measured
+                telemetry did not improve — the actuator may not have responded. Approval
+                is not recovery.
+              </p>
+            ) : null}
           </div>
         ) : <p className="text-xs text-ink-faint">Compare an active incident before approval.</p>}
       </Panel>

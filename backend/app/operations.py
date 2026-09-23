@@ -91,16 +91,33 @@ class OperationalService:
         self._persist_incident(updated)
         return updated
 
-    async def compare(self, incident_id: UUID, duty: float = 0.0) -> dict[str, Any]:
+    async def compare(
+        self, incident_id: UUID, duty: float = 0.0, action_id: str = "REDUCE_PAYLOAD_POWER"
+    ) -> dict[str, Any]:
+        """Baseline against one implemented alternative, from the same observed start.
+
+        Both projections run from the identical estimate and the identical external
+        schedule, so neither option is given privileged knowledge of the injected fault.
+        Only actions marked enabled in actions.yaml may be offered.
+        """
         if incident_id not in self.incident_engine.incidents:
             raise KeyError(incident_id)
+        if action_id not in self.config.actions.enabled_ids:
+            raise ValueError(f"{action_id} is not an enabled recovery action.")
         estimate = self.latest_estimate
         if estimate is None:
             raise ValueError("No valid observed state is available for comparison.")
+
+        isolate = action_id == "ISOLATE_OPTIONAL_BRANCH"
+        branch = self.config.spacecraft.power.optional_branch
         baseline, action = await asyncio.gather(
             asyncio.to_thread(forecast, estimate, self.config.spacecraft),
             asyncio.to_thread(
-                forecast, estimate, self.config.spacecraft, payload_duty_percent=duty
+                forecast,
+                estimate,
+                self.config.spacecraft,
+                payload_duty_percent=None if isolate else duty,
+                isolate_branch=isolate,
             ),
         )
         await asyncio.to_thread(self._persist_forecast, baseline)
@@ -110,8 +127,10 @@ class OperationalService:
             id=uuid4(),
             run_id=estimate.run_id,
             incident_id=incident_id,
-            action_id="REDUCE_PAYLOAD_POWER",
-            action_arguments={"duty_percent": duty},
+            action_id=action_id,
+            action_arguments=(
+                {"branch_id": branch.id} if isolate else {"duty_percent": duty}
+            ),
             evidence_frame_seq=estimate.frame_seq,
             control_revision=estimate.control_revision,
             created_at_utc=now,
@@ -120,10 +139,30 @@ class OperationalService:
             action_forecast_id=action.id,
             input_validity={"battery_soc": (0.0, 100.0)},
             outcome_paths=(
-                "Measured load falls after application.",
+                (
+                    f"Measured load falls by about {branch.rated_w:.0f} W if the isolator "
+                    "responds."
+                    if isolate
+                    else "Measured load falls after application."
+                ),
                 "Reserve projection improves or remains unchanged.",
+                (
+                    "If the isolator does not respond, the command still applies and the "
+                    "outcome is reported as no change."
+                    if isolate
+                    else "If demand does not fall, the outcome is reported as no change."
+                ),
             ),
-            trade_off="Reducing payload duty delays configured mission work.",
+            trade_off=(
+                (
+                    f"Isolating branch {branch.id} removes its load and its heat. It does "
+                    "not repair the branch: the hardware stays failed and its function is "
+                    "unavailable until ground intervention. Essential power cannot be "
+                    "isolated."
+                )
+                if isolate
+                else "Reducing payload duty delays configured mission work."
+            ),
         )
         self.proposals[proposal.id] = proposal
         return {

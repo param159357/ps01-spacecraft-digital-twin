@@ -24,14 +24,24 @@ def forecast(
     config: SpacecraftConfig,
     *,
     payload_duty_percent: float | None = None,
+    isolate_branch: bool = False,
 ) -> ForecastResult:
-    """Project 30 minutes without access to mutable simulator state or hidden fields."""
+    """Project 30 minutes without access to mutable simulator state or hidden fields.
+
+    `isolate_branch` projects the effect of opening the optional branch's isolator. The
+    branch's rated power is a configured vehicle parameter the ground legitimately knows,
+    so subtracting it is a nominal-parameter projection, not a peek at hidden truth. It
+    assumes the isolator responds — which is exactly why the outcome is judged afterwards
+    from measured telemetry rather than assumed from the projection.
+    """
     horizon = config.simulation.forecast_horizon_s
     step_s = 10.0
     duty = estimate.payload_duty_percent if payload_duty_percent is None else payload_duty_percent
     observed_payload_w = config.power.payload_nominal_w * estimate.payload_duty_percent / 100.0
     residual_w = max(0.0, estimate.load_w - observed_payload_w)
     projected_load_w = residual_w + config.power.payload_nominal_w * duty / 100.0
+    if isolate_branch:
+        projected_load_w = max(0.0, projected_load_w - config.power.optional_branch.rated_w)
     energy = estimate.energy_wh
     times = [estimate.sim_time_s]
     socs = [100.0 * energy / config.power.battery_capacity_wh]
@@ -122,6 +132,14 @@ def forecast(
             "Future illumination follows the configured demonstration schedule.",
             "Observed non-payload demand and estimated sunlit generation persist.",
             "No future injected conditions or unknown commands are assumed.",
+        )
+        + (
+            (
+                "Assumes the optional branch isolator responds to the command; the "
+                "actual outcome is judged from measured telemetry afterwards.",
+            )
+            if isolate_branch
+            else ()
         ),
         limitations=("This is a fictional test-vehicle projection, not a calibrated probability.",),
         series=(
@@ -136,6 +154,14 @@ def forecast(
             ),
         ),
         crossings=tuple(crossings),
-        action_id="REDUCE_PAYLOAD_POWER" if payload_duty_percent is not None else None,
-        action_arguments={"duty_percent": duty} if payload_duty_percent is not None else {},
+        action_id=(
+            "ISOLATE_OPTIONAL_BRANCH"
+            if isolate_branch
+            else ("REDUCE_PAYLOAD_POWER" if payload_duty_percent is not None else None)
+        ),
+        action_arguments=(
+            {"branch_id": config.power.optional_branch.id}
+            if isolate_branch
+            else ({"duty_percent": duty} if payload_duty_percent is not None else {})
+        ),
     )

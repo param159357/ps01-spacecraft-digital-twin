@@ -5,6 +5,81 @@ Newest first within each phase.
 
 ---
 
+## Phase 5 — major and delayed-intervention cases
+
+### The optional branch is modelled, not simulated by a magic number
+
+`power.optional_branch` is a real load with a rated power and a declared share of its heat
+reaching the payload node. When it fails on, demand rises by exactly its rated power and
+the payload node warms because of that same power — so D04's thermal evidence has a
+modelled electrical cause rather than a hand-placed temperature offset. Isolating it
+removes both at once.
+
+### Commanding isolation is not the same as the isolator obeying
+
+`truth.branch_isolate_commanded` records what the ground commanded and is published in
+`known_commands`. Whether the branch actually de-energises depends on the hidden
+`isolator_failed` injection. That separation is the whole point of the phase: with the
+isolator failed, the command is genuinely `ACCEPTED` and then `APPLIED`, and measured
+demand does not move, so the outcome is reported `NO_CHANGE` and the master console says
+recovery failed. Nothing in the path is allowed to infer success from the fact that a
+command was applied.
+
+### Isolation removes a load; it does not repair hardware
+
+The trade-off text says so explicitly, and the model backs it up: releasing the isolator
+brings the fault straight back, because nothing repaired the branch. A test asserts this,
+so the claim cannot quietly drift into "the software fixed it".
+
+### The irreversible consequence is lost operating time, not battery damage
+
+Section 13.1 forbids claiming permanent battery damage from low charge alone, and this
+model has no damage state — a drained battery recharges normally, and a test asserts that.
+The consequence D03 does record is `payload_outage_s`: simulated seconds during which
+payload operation was commanded but not served, because the declared load shedding had
+dropped it. Those seconds accumulate and never decrease. A recovery approved afterwards
+restores the payload but cannot give the lost operating time back, which is exactly the
+point the delayed-intervention case needs to make.
+
+### ACTUATOR_MISMATCH compares a known command with a measured channel
+
+Both sides are legitimately available to an operator: the commanded thermostat state is a
+known command in frame context, and heater power is a measured channel. The rule needs no
+access to simulator truth. It reports a discrepancy and does not claim to know whether the
+actuator, its sensor or the command path is at fault.
+
+### Isolation forecasts subtract a configured parameter, not hidden truth
+
+Projecting isolation subtracts the branch's *rated* power, which is a configured vehicle
+parameter the ground legitimately knows, and the projection states in its assumptions that
+it presumes the isolator responds. The actual outcome is still judged afterwards from
+measured telemetry — which is why the failed-isolator case reports `NO_CHANGE` despite an
+optimistic projection.
+
+### Engineering detail may carry a label; telemetry channels may not
+
+`TelemetryFrame.values` is strictly numeric, boolean or null — that is the channel
+contract. `engineering` is deliberately not a channel, and two of its entries are short
+labels: which loads are currently shed, and when resets occurred. Typing it numeric-only
+looked harmless because those entries are `None` almost all the time, and it went
+unnoticed until the first real load-shedding event stopped frame construction outright.
+`EngineeringValue` now admits a string while a separate validator keeps NaN and Infinity
+out of the numeric entries, so the JSON guarantee in section 6.2 still holds.
+
+The wider lesson recorded here: a test that exercises a model path is not the same as a
+test that exercises the *observation* path. The shedding behaviour had model-level tests
+from Phase 2 and they all passed, because none of them ever built a frame.
+
+### Scenario presets use labelled starting conditions
+
+D03 and D04 reset to a stated state of charge, spacecraft clock and payload temperature so
+each scenario reaches its evidence within a demo window instead of after twenty minutes.
+Section 7.1 permits beginning near a boundary provided it is visibly labelled; no timestamp
+is falsified and no result is forced. The simulator console states this next to the preset
+buttons.
+
+---
+
 ## Phase 4 — five mission-control dashboards
 
 ### Flight-systems channels are profiles, and say so everywhere

@@ -122,6 +122,16 @@ class TelemetryConfig(BaseModel):
         return tuple(c for c in self.channels if group in c.groups)
 
 
+class OptionalBranchConfig(BaseModel):
+    """An optional load branch with independent isolation hardware (section 9.2)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    rated_w: float = Field(gt=0)
+    heat_fraction_to_payload: float = Field(ge=0, le=1)
+
+
 class PowerConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -144,6 +154,7 @@ class PowerConfig(BaseModel):
     solar_reference_voltage_v: float = Field(gt=0)
     solar_voltage_tempco_v_per_k: float = Field(ge=0)
     shed_order: tuple[str, ...] = ()
+    optional_branch: OptionalBranchConfig
 
     @model_validator(mode="after")
     def _shed_order_known(self) -> PowerConfig:

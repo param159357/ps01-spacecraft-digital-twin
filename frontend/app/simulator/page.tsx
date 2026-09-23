@@ -139,6 +139,8 @@ export default function SimulatorConsole() {
     heater_stuck_on: false,
     heater_auto: true,
     contact_loss: false,
+    branch_stuck_on: false,
+    isolator_failed: false,
   });
 
   const refreshTruth = useCallback(async () => {
@@ -153,6 +155,8 @@ export default function SimulatorConsole() {
           extra_load_w: Number(hidden.extra_load_w ?? 0),
           heater_stuck_on: Boolean(hidden.heater_stuck_on),
           contact_loss: Boolean(hidden.contact_loss),
+          branch_stuck_on: Boolean(hidden.branch_stuck_on),
+          isolator_failed: Boolean(hidden.isolator_failed),
           payload_duty_percent: Number(known.payload_duty_percent ?? 100),
           heater_auto: Boolean(known.heater_auto ?? true),
         });
@@ -203,6 +207,50 @@ export default function SimulatorConsole() {
       await refreshTruth();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load D02.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadD04(isolatorWorks: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      // Labelled starting conditions, chosen so D04 produces BOTH kinds of evidence
+      // quickly: the payload node begins close to its configured limit, and the run
+      // begins shortly before a scheduled eclipse with a modest reserve, so the
+      // 30-minute projection crosses the reserve boundary. Section 7.1 permits starting
+      // near a boundary provided it is visibly labelled; no timestamp is falsified.
+      await runControl("RESET", {
+        initial_soc_percent: 28,
+        initial_sim_time_s: 3000,
+        initial_payload_temperature_c: 53,
+      });
+      await setConditions({ branch_stuck_on: true, isolator_failed: !isolatorWorks });
+      await runControl("START");
+      await refreshTruth();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load D04.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadD03() {
+    setBusy(true);
+    setError(null);
+    try {
+      // A low reserve just before a scheduled eclipse, with a heavy unexplained load.
+      // Left alone the warning escalates to critical within a couple of minutes, and if
+      // it is still ignored the declared load shedding eventually drops the payload —
+      // and that operating time is gone for good. Labelled starting condition, not a
+      // falsified timestamp.
+      await runControl("RESET", { initial_soc_percent: 11, initial_sim_time_s: 3500 });
+      await setConditions({ extra_load_w: 300, payload_duty_percent: 100 });
+      await runControl("START");
+      await refreshTruth();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load D03.");
     } finally {
       setBusy(false);
     }
@@ -275,7 +323,29 @@ export default function SimulatorConsole() {
                 busy={busy}
                 tone="primary"
               />
+              <ControlButton
+                label="Load D03 delayed response"
+                onClick={() => void loadD03()}
+                busy={busy}
+              />
+              <ControlButton
+                label="Load D04 stuck branch"
+                onClick={() => void loadD04(true)}
+                busy={busy}
+                tone="primary"
+              />
+              <ControlButton
+                label="Load D04 with a failed isolator"
+                onClick={() => void loadD04(false)}
+                busy={busy}
+                tone="danger"
+              />
             </div>
+            <p className="mt-2 text-[10px] text-ink-faint">
+              Each scenario resets to a visibly labelled starting condition — a stated
+              state of charge, spacecraft clock or payload temperature. No timestamp is
+              falsified to force a dramatic result.
+            </p>
             <dl className="mt-4 space-y-1 text-xs">
               <div className="flex justify-between">
                 <dt className="text-ink-faint">Run ID</dt>
@@ -333,6 +403,18 @@ export default function SimulatorConsole() {
                 checked={conditions.heater_stuck_on}
                 hint="The actuator ignores its command. Observed state will differ from commanded."
                 onChange={(v) => void commit({ heater_stuck_on: v })}
+              />
+              <Toggle
+                label="Optional branch stuck on"
+                checked={conditions.branch_stuck_on}
+                hint="Branch OPTIONAL_A draws its rated power regardless of command. Produces both power and thermal evidence."
+                onChange={(v) => void commit({ branch_stuck_on: v })}
+              />
+              <Toggle
+                label="Isolator does not respond"
+                checked={conditions.isolator_failed}
+                hint="An approved isolation command still applies, but nothing changes — the operator sees a failed recovery."
+                onChange={(v) => void commit({ isolator_failed: v })}
               />
               <Toggle
                 label="Loss of contact"

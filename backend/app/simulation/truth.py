@@ -32,6 +32,11 @@ class InjectedConditions(BaseModel):
     extra_load_w: float = Field(default=0.0, ge=0.0, le=300.0)
     heater_stuck_on: bool = False
     contact_loss: bool = False
+    # The optional branch draws its rated power regardless of what was commanded.
+    branch_stuck_on: bool = False
+    # The isolator ignores its command. A recovery action can then be APPLIED and
+    # still fail to improve anything, which operators must be able to see.
+    isolator_failed: bool = False
 
     # Total computer resets that should have occurred in this run. Raising it makes the
     # vehicle record one timestamped reset event per increment; it never decreases within
@@ -51,6 +56,8 @@ class InjectedConditions(BaseModel):
             "heater_stuck_on": self.heater_stuck_on,
             "contact_loss": self.contact_loss,
             "computer_resets": self.computer_resets,
+            "branch_stuck_on": self.branch_stuck_on,
+            "isolator_failed": self.isolator_failed,
         }
 
     @property
@@ -72,6 +79,8 @@ class ConditionUpdate(BaseModel):
     heater_stuck_on: bool | None = None
     contact_loss: bool | None = None
     computer_resets: int | None = Field(default=None, ge=0, le=20)
+    branch_stuck_on: bool | None = None
+    isolator_failed: bool | None = None
     payload_duty_percent: float | None = Field(default=None, ge=0.0, le=100.0)
     heater_auto: bool | None = None
     mode: OperatingMode | None = None
@@ -100,6 +109,12 @@ class SimulatorTruth:
     # A new run restarts the counter without implying a physical reset (section 7.5).
     resets_applied: int = 0
     reset_events_s: list[float] = field(default_factory=list)
+    # Set by an approved ISOLATE_OPTIONAL_BRANCH command. This is what the ground
+    # commanded; whether the isolator obeyed is a separate, hidden matter.
+    branch_isolate_commanded: bool = False
+    # Simulated seconds during which payload operation was commanded but not served.
+    # Already-elapsed seconds cannot be recovered by any later action.
+    payload_outage_s: float = 0.0
 
     @classmethod
     def initial(
@@ -140,6 +155,8 @@ class SimulatorTruth:
             "packet_window": [list(sample) for sample in self.packet_window],
             "resets_applied": self.resets_applied,
             "reset_events_s": list(self.reset_events_s),
+            "branch_isolate_commanded": self.branch_isolate_commanded,
+            "payload_outage_s": self.payload_outage_s,
         }
 
     @classmethod
@@ -161,6 +178,8 @@ class SimulatorTruth:
             ],
             resets_applied=int(data.get("resets_applied", 0)),
             reset_events_s=[float(v) for v in (data.get("reset_events_s") or [])],
+            branch_isolate_commanded=bool(data.get("branch_isolate_commanded", False)),
+            payload_outage_s=float(data.get("payload_outage_s", 0.0)),
         )
 
     # --- presenter view -------------------------------------------------------
@@ -177,6 +196,8 @@ class SimulatorTruth:
             "valve_open": self.valve_open,
             "resets_applied": self.resets_applied,
             "reset_events_s": list(self.reset_events_s),
+            "branch_isolate_commanded": self.branch_isolate_commanded,
+            "payload_outage_s": round(self.payload_outage_s, 1),
             "hidden_conditions": self.conditions.hidden_fields,
             "known_commands": self.conditions.known_commands,
         }

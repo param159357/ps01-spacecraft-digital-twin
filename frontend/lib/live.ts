@@ -246,6 +246,8 @@ export interface SimulatorConditions {
   extra_load_w: number;
   heater_stuck_on: boolean;
   contact_loss: boolean;
+  branch_stuck_on: boolean;
+  isolator_failed: boolean;
   payload_duty_percent: number;
   heater_auto: boolean;
   mode: string;
@@ -265,7 +267,13 @@ export interface SimulatorTruthView {
 
 export function runControl(
   operation: RunOperation,
-  options: { seed?: number; initial_soc_percent?: number; initial_sim_time_s?: number } = {},
+  // Bounded, visibly labelled starting conditions for the demonstration scenarios.
+  options: {
+    seed?: number;
+    initial_soc_percent?: number;
+    initial_sim_time_s?: number;
+    initial_payload_temperature_c?: number;
+  } = {},
 ) {
   return api.post<RunMeta>("/simulator/run", { operation, ...options });
 }

@@ -5,7 +5,7 @@
 # implementation or tests yet, so it MUST NOT be offered to an operator as an
 # available fix.
 
-config_version: "actions-0.2.0"
+config_version: "actions-0.3.0"
 
 defaults:
   proposal_ttl_s: 30           # section 9.3 suggested TTL
@@ -53,7 +53,7 @@ actions:
 
   - id: ISOLATE_OPTIONAL_BRANCH
     label: Isolate optional branch
-    enabled: false
+    enabled: true
     phase: 5
     subsystem: POWER
     operation: Open an independently modelled isolator on an optional load branch.

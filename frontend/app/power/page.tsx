@@ -58,6 +58,12 @@ function PowerBoundary({ engineering }: { engineering: Record<string, unknown> }
           Load shedding active: {shed}. Essential load is never shed.
         </p>
       ) : null}
+      {typeof engineering.payload_outage_s === "number" && engineering.payload_outage_s > 0 ? (
+        <p className="rounded border border-critical/40 bg-critical/10 px-2 py-1.5 text-xs text-critical">
+          Payload operation lost: {engineering.payload_outage_s.toFixed(0)} s and counting.
+          Already-elapsed time cannot be recovered by any later action.
+        </p>
+      ) : null}
       <p className="text-[10px] text-ink-faint">
         Curtailment at a full battery is expected behaviour, not a generation fault.
         <span className="tnum"> load_power</span> is requested demand; served and unmet

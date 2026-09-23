@@ -4,8 +4,8 @@
 # assumption chosen to make the demonstration reproducible and independently
 # testable. None of it is sourced from NASA, ISRO or any real spacecraft.
 
-config_version: "spacecraft-0.4.0"
-model_version: "twin-0.4.0"
+config_version: "spacecraft-0.5.0"
+model_version: "twin-0.5.0"
 vehicle_name: "PS01 Demonstration Vehicle"
 
 power:
@@ -33,6 +33,14 @@ power:
   # Declared load-shedding order when supply cannot meet demand. Essential load is
   # never shed, and an uncontrolled fault load cannot be shed by definition.
   shed_order: [payload, heater]
+
+  # An independently modelled optional load branch with its own isolator (section 9.2).
+  # Isolating it removes the load and its heat; it does NOT repair the branch. Essential
+  # power has no isolator and can never be isolated.
+  optional_branch:
+    id: OPTIONAL_A
+    rated_w: 150.0                 # branch demand when energised, fixture
+    heat_fraction_to_payload: 0.6  # share of branch power reaching the payload node
 
 observation:
   # Seeded sensor noise, expressed as a standard deviation in each channel's own unit.
