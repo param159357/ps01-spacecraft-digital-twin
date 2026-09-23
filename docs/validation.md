@@ -5,6 +5,54 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 3 — first complete demonstration
+
+**Date:** 2026-09-23
+**Environment:** Windows 11 Pro, Python 3.14.3, Node 24.19.0, PostgreSQL 17.
+
+### Executed checks
+
+| # | Check | Command / method | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `pytest -q` | **79 passed**, 0 failed, 60.83 s |
+| 2 | Phase 3 focused suite | `pytest tests/test_phase3.py -q` | **5 passed** |
+| 3 | Backend lint | `ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0** |
+| 5 | Static export | `npm run build` | **exit 0**, 9 routes exported |
+| 6 | Estimator rejects invalid evidence | `test_estimator_refuses_invalid_required_observation` | Missing required SOC produces no estimate/forecast |
+| 7 | Same-start comparison | `test_payload_action_forecast_uses_same_observed_start_and_improves_reserve` | Baseline/action share source frame and initial SOC; action ends with higher reserve; battery thermal series present |
+| 8 | Incident deduplication | `test_continuing_supply_fault_is_one_incident_and_recovers_after_dwell` | Repeated bad frames remain one active incident |
+| 9 | Normal eclipse context | `test_normal_eclipse_does_not_open_generation_shortfall` | 34 eclipse frames with 0 W solar open no generation fault |
+| 10 | Idempotency and outcome | `test_idempotent_command_is_one_record_and_measured_drop_is_improved` | Same key returns one command; post-command load drop becomes `IMPROVED` |
+| 11 | D01 through browser UI | simulator D01 preset → master | run `b35ccd34` crossed into eclipse at 01:00:00; master showed 0 W generation, 180 W load, expected discharge and **no incident** |
+| 12 | D02 through browser UI and storage | simulator D02 preset → master compare/approve | run `703c743a`: reserve projection **19.7% baseline vs 23.9% action**; measured load **380.3 → 299.6 W**; command `APPLIED`, outcome **IMPROVED**, incident entered recovery |
+| 13 | API restarted after backend correction | stopped old Uvicorn, started one worker without `--reload`, repeated D02 | corrected outcome visible through the running API and browser |
+| 14 | Port/storage preflight | listener checks plus TCP probe | ports 3000/8000 free before initial server start; PostgreSQL answered on 5432; existing database/volume was not stopped or deleted |
+
+### Acceptance criteria for Phase 3
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Changed load creates supported evidence and an early consequence forecast | **Pass** | D02 opened `ENERGY_RESERVE` from observed evidence and projected a warning crossing in about 27 minutes |
+| Approved action changes measured load and projected reserve | **Pass** | checks 7 and 12 |
+| Duplicate clicks apply once | **Pass** | check 10; database uniqueness remains a second guard |
+| One continuing fault remains one incident | **Pass** | check 8 |
+| Normal eclipse is handled correctly | **Pass** | checks 9 and 11 |
+| AI is not required | **Pass** | deterministic estimator, rules, forecast and action path only |
+
+### Known limitations after Phase 3
+
+- Forecast coverage is intentionally partial: power/battery reserve and the battery
+  thermal node are projected; other nodes and flight channels remain unavailable.
+- Active proposals and in-memory lifecycle state are not rehydrated after an API restart;
+  stored incident/forecast/command evidence remains, and the run restarts paused.
+- Browser verification used the real frontend and Uvicorn against the test database so
+  fixed test credentials could be used without changing the provisioned demo passwords.
+- Docker CLI was not available on this PowerShell `PATH`; PostgreSQL connectivity was
+  verified directly and no compose stop/down command was run.
+
+---
+
 ## Phase 2 — shared live simulator
 
 **Date:** 2026-09-23

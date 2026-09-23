@@ -5,6 +5,51 @@ Newest first within each phase.
 
 ---
 
+## Phase 3 — first complete demonstration
+
+### Observed state is a hard module boundary
+
+`forecasts/estimator.py` is the only forecast initializer. It accepts a frozen
+`TelemetryFrame` and nominal configuration and has no import from `simulation.truth`.
+It rejects the estimate when any required channel is not `VALID`, initializes energy
+from observed SOC, derives sunlit generation from observed voltage/current, and carries
+only public known commands. Monitoring follows the same `value_if_valid` rule. Hidden
+conditions and `runs.private_checkpoint` never enter either path.
+
+### Forecast coverage is deliberately selected, not universal
+
+The 30-minute engine projects battery reserve and the selected battery thermal node. It
+uses the configured illumination schedule, observed persistent non-payload demand,
+estimated generation, observed heater power/current, and nominal node parameters. The
+result remains `PARTIAL`: it does not imply that every displayed thermal or flight
+channel is forecastable.
+
+### D01 and D02 use labelled starting-condition presets
+
+The simulator UI can reset D01 to ten simulated seconds before the configured eclipse
+and D02 to 24% SOC with a 200 W unexplained load. These are simulator-only, bounded,
+explicitly labelled fictional starting conditions. Operators receive only the resulting
+observations. This makes the two scenarios reproducible without waiting an hour or
+falsifying received timestamps.
+
+### Accepted, applied, and improved remain separate
+
+Approval stores `ACCEPTED`, queues the predefined payload-duty command for the next tick,
+then records `APPLIED`. Outcome is decided from later valid `load_power` observations
+against the pre-application observed baseline. The first browser run found and fixed a
+bug that had captured the baseline after application and incorrectly reported
+`NO_CHANGE` despite an 80 W measured reduction.
+
+### Live orchestration is in-process; evidence is persisted
+
+Active engine state and unexpired proposals are owned by the one API process. Incidents,
+forecasts and commands are persisted, but Phase 3 does not rehydrate active proposals or
+the in-memory lifecycle cache after restart; a restart returns the run paused and the
+operator compares again. Durable orchestration is outside the single-process hackathon
+scope.
+
+---
+
 ## Phase 2 — shared live simulator
 
 ### Hidden truth versus known commands

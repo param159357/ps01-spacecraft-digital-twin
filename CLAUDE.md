@@ -898,7 +898,7 @@ This delivered specification does not inspect or assert implementation status in
 |---|---|---|---|
 | 1 | COMPLETE | `docs/validation.md` Phase 1: 29 backend tests pass, ruff clean, tsc clean, static export builds, `alembic check` clean, live 401/403 verified by curl and in a browser | Phase 1 done |
 | 2 | COMPLETE | `docs/validation.md` Phase 2: 74 backend tests pass; 52.6316 Wh energy reference and analytic thermal response verified; two live SSE clients observed identical frames 27–33; reset, pause, truth isolation and contact-loss staleness checked in a browser | Phase 2 done |
-| 3 | NOT_STARTED | None recorded here | First end-to-end recovery demo |
+| 3 | COMPLETE | `docs/validation.md` Phase 3: 79 backend tests pass; D01 eclipse opens no false incident; D02 projects 19.7% vs 23.9%, applies once, and measured load falls 380.3 → 299.6 W with `IMPROVED` outcome | Phase 3 done |
 | 4 | NOT_STARTED | None recorded here | Five usable dashboards |
 | 5 | NOT_STARTED | None recorded here | Major and delayed-response cases |
 | 6 | NOT_STARTED | None recorded here | Historical recurrence |
@@ -919,6 +919,31 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 3
+
+- Status: COMPLETE.
+- Implemented/files changed: observation-only estimator; deterministic power/battery
+  thermal forecast; freshness, generation, reserve, thermal and supply rules; deduplicated
+  incident lifecycle; persisted forecasts/incidents/commands; 30-second comparison
+  proposals; master-only idempotent tick-boundary payload reduction; measured recovery;
+  master operations panels; labelled D01/D02 simulator presets.
+- Checks actually run and results: 79 backend tests pass; 5 focused Phase 3 tests pass;
+  ruff and TypeScript clean; static export builds 9 routes. Browser D01 crossed into
+  eclipse with no false incident. Browser D02 projected 19.7% baseline versus 23.9%
+  action reserve and measured 380.3 W → 299.6 W after approval, reporting `IMPROVED`.
+- Decisions/deviations from this specification: forecast scope is power/reserve plus the
+  selected battery thermal node and is labelled `PARTIAL`; D01/D02 use bounded labelled
+  initial conditions; active proposals/lifecycle cache are in-process while evidence is
+  persisted. Details in `docs/decisions.md`.
+- Missing credentials or external checks: no AI provider needed; no deployment host.
+  Docker CLI was unavailable on this shell path, but PostgreSQL answered on 5432 and its
+  existing container/volume was never stopped or deleted.
+- Known limitations: remaining thermal/flight forecast coverage is unavailable; proposal
+  and active lifecycle rehydration after restart is deferred; browser flow used the test
+  database with fixed test accounts.
+- Next exact task: Phase 4 — five usable mission-control dashboards. Stop here for this
+  request.
 
 ### 2026-09-23 — Phase 2
 
