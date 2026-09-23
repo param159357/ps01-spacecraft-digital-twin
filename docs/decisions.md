@@ -5,6 +5,51 @@ Newest first within each phase.
 
 ---
 
+## Phase 6 — historical data and recurrence
+
+### Historical code has a storage-only dependency boundary
+
+`analysis/history.py` and `analysis/tools.py` select stored observations, incidents,
+timeline events, commands and forecasts only. They do not import the simulator package
+and never select a run checkpoint. The public summary and template report were also
+scanned as raw JSON for all seven hidden condition names plus checkpoint/internal-truth
+labels. This is structural, not a promise that callers will remember to filter later.
+
+### A continuing incident is counted from the incident row
+
+All counts and recurrence groups use distinct `incidents.id` values. Timeline changes
+and evidence frames may be numerous, but they cannot inflate the incident count. Duration
+is the incident interval clipped to the selected window. A recurrence is a new incident
+with the same rule/entity pair, not another event on one open incident.
+
+### Command-to-incident links live in timeline evidence references
+
+The existing command schema deliberately has no `incident_id`. Rather than add schema
+just for reporting, command status and measured-outcome changes write an
+`incident_events` row whose `evidence_ids` contains `command:<uuid>`. Historical action
+classification follows that explicit stored link. Missing, rejected, accepted-but-
+ineffective, unknown and improved remain separate categories.
+
+### The synthetic month is minute evidence with three short 1 Hz excerpts
+
+The generator advances the shared electrical model and the stability-substepped thermal
+model once per minute, storing 43,200 June summaries rather than 2.6 million frames. It
+stores three five-minute 1 Hz excerpts (900 frames total) around selected incident
+openings. The labelled recurring case is an observed 150 W draw on `OPTIONAL_A` while its
+stored equipment schedule calls for 0 W, every Tuesday at 10:00 UTC for 20 minutes; the
+rest of the month is clean comparison time. The dataset is cached by month, seed,
+spacecraft config version and schedule parameters. A partial cache is preserved and
+reported instead of silently deleted.
+
+### Phase 6 reviews are deterministic templates
+
+`POST /history/review` renders computed facts into `analyses` with generation mode
+`TEMPLATE` and a stable window cache key. It has no provider, prompt, token queue,
+scheduler or generated diagnosis. The report explicitly says it does not infer hidden
+truth or establish root cause. Provider-backed interpretation remains Phase 7.
+
+---
+
 ## Phase 5 — major and delayed-intervention cases
 
 ### The optional branch is modelled, not simulated by a magic number

@@ -5,6 +5,66 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 6 — historical data and recurrence
+
+**Date:** 2026-09-23
+**Environment:** Windows 11 Pro, Python 3.14.3, Node 24.19.0, PostgreSQL 17 (existing
+Docker volume; Docker CLI unavailable on this shell path).
+
+### Executed checks
+
+| # | Check | Command / method | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `./.venv/Scripts/python.exe -m pytest -q` | **107 passed**, 0 failed, 84.49 s; two known non-failing warnings |
+| 2 | Phase 6 focused coverage | included as `tests/test_phase6.py` in check 1 | **4 passed**: window semantics, generated month/API/tools, long-incident count, live timeline persistence |
+| 3 | Lint | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0** |
+| 5 | Static export | `npm run build` | **exit 0**; 9 application routes exported (11 static pages including framework pages) |
+| 6 | Schema drift | `./.venv/Scripts/python.exe -m alembic check` | **No new upgrade operations detected** |
+| 7 | Synthetic month generation | `backend/.venv/Scripts/python.exe -m scripts.generate_history --month 2026-06 --seed 6026` | run `be00d3df`; **43,200** minute buckets, **5** incidents, **900** 1 Hz evidence frames in **6.16 s** |
+| 8 | Cache reuse | same command a second time | same run returned with `cached: true` in **0.073 s**; no rows regenerated |
+| 9 | Real HTTP summary | restarted one-worker Uvicorn without `--reload`; authenticated `GET /api/history/summary` | dataset `SYNTHETIC`; completed June UTC; **43,200/43,200 minutes (100%)**; **5 distinct incidents**; recurrence count **5** |
+| 10 | Command-versus-measured classes | same real API response | command missing **1**, rejected **1**, accepted but ineffective **1**, outcome unknown **1**, improved **1** |
+| 11 | Hidden-field response guard | raw summary, template review and all four tool results | **0 hits** for seven hidden condition names, `private_checkpoint` or `hidden_conditions` |
+| 12 | Deterministic review/cache | authenticated `POST /api/history/review` twice | `TEMPLATE`, `COMPLETED`; identical result, second response cached |
+| 13 | Browser history console | master login → `/history/` → synthetic June → Generate review | selected dates/source visible; 5 incidents, 100% coverage, recurrence row, five action classes and cached template report all rendered |
+| 14 | Final API health | `GET /api/health` after restart | **200 `{"status":"ok"}`** |
+| 15 | Final port/storage state | listener and TCP checks after stopping app servers | ports **3000/8000 free**; PostgreSQL still reachable on 5432; container/volume never stopped or removed |
+
+### Acceptance criteria for Phase 6
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| One long incident is counted once | **Pass** | a single eight-hour incident with 20 timeline events reports one distinct incident and 28,800 s duration |
+| Synthetic and live data are never silently mixed | **Pass** | source is required by the API and stated in every response/UI panel; the same June LIVE query returned zero incidents while SYNTHETIC returned five |
+| Selected dates and coverage appear | **Pass** | check 13 visibly showed the completed June UTC bounds and 43,200/43,200 minutes |
+| Recurrence is derived from stored records | **Pass** | five distinct `ACTUATOR_MISMATCH`/`OPTIONAL_A` incident rows produced recurrence count five; no answer is hard-coded in statistics or UI |
+| Tool responses reveal no hidden truth | **Pass** | check 11 and the expanded operational response guard |
+| Month storage stays bounded | **Pass** | 43,200 minute buckets plus 900 selected 1 Hz frames, not a full month at 1 Hz |
+
+### Defect found and fixed during this phase
+
+The first live timeline-persistence test exposed SQLAlchemy insert ordering: because the
+ORM models have scalar foreign keys but no relationship, adding a new incident and its
+first event in one flush could insert the child first and violate the foreign key. The
+incident row is now flushed before the opening event. The regression test then verified
+opening, severity, lifecycle, acknowledgement, command-status and command-outcome rows.
+
+### Known limitations after Phase 6
+
+- Synthetic history is a labelled demonstration dataset, not flight evidence. Its
+  recurring optional-branch schedule mismatch is configurable but remains fictional.
+- Historical queries cap incidents at 2,000, timeline events at 10,000, and investigator
+  tool results at their declared per-call limits; responses say when a cap is reached.
+- The deterministic review interprets nothing beyond its fixed template. Live AI,
+  provider configuration, event queues and periodic scheduling are Phase 7 and were not
+  implemented.
+- Docker CLI remained unavailable on this shell path. PostgreSQL health was verified by
+  TCP and every database-backed check passed; the existing container and volume were
+  never stopped or removed.
+
+---
+
 ## Phase 5 — major and delayed-intervention cases
 
 **Date:** 2026-09-23

@@ -901,7 +901,7 @@ This delivered specification does not inspect or assert implementation status in
 | 3 | COMPLETE | `docs/validation.md` Phase 3: 79 backend tests pass; D01 eclipse opens no false incident; D02 projects 19.7% vs 23.9%, applies once, and measured load falls 380.3 → 299.6 W with `IMPROVED` outcome | Phase 3 done |
 | 4 | COMPLETE | `docs/validation.md` Phase 4: 91 backend tests pass; all 28 channels carry a model or a declared profile; link reports unavailable outside a scheduled pass; specialist incident lists are role-scoped; five consoles reviewed at 1366x768 and 1920x1080 | Phase 4 done |
 | 5 | COMPLETE | `docs/validation.md` Phase 5: 103 backend tests pass; D04 live gives IMPROVED with load 330.7 -> 179.7 W, and with a failed isolator gives APPLIED + NO_CHANGE with load unmoved; D03 escalates WARNING -> CRITICAL; no permanent-damage claim | Phase 5 done |
-| 6 | NOT_STARTED | None recorded here | Historical recurrence |
+| 6 | COMPLETE | `docs/validation.md` Phase 6: 107 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; real API/UI show 100% coverage and zero hidden-field hits | Phase 6 done |
 | 7 | NOT_STARTED | None recorded here | Live AI and period reviews |
 | 8 | NOT_STARTED | None recorded here | Essential checks |
 | 9 | NOT_STARTED | None recorded here | Deploy and rehearse |
@@ -919,6 +919,47 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 6
+
+- Status: COMPLETE.
+- Implemented/files changed:
+  - `analysis/history.py`, `api/history.py` — explicit completed UTC windows, required
+    source selection, bounded queries, distinct incident/duration/severity/coverage and
+    command-versus-measured statistics, plus cached deterministic template reviews.
+  - `analysis/tools.py` — bounded read-only `get_incident_evidence`,
+    `get_recent_telemetry`, `find_similar_incidents` and `get_forecast_comparison`
+    functions over stored observations only.
+  - `operations.py` — durable timeline rows for opening, severity, lifecycle,
+    acknowledgement, command status and measured command outcome changes.
+  - `analysis/synthetic.py`, `scripts/generate_history.py` — deterministic cached month
+    using shared electrical/thermal models; minute summaries and three short 1 Hz
+    excerpts around a labelled recurring schedule mismatch.
+  - `frontend/app/history/page.tsx` — dataset/period selection, coverage, recurrence,
+    action-outcome evidence and deterministic saved review views.
+  - Hidden-field response guard extended with `computer_resets`, `branch_stuck_on` and
+    `isolator_failed`; Phase 6 tests cover the storage/API/tool boundary.
+- Checks actually run and results: 107 backend tests pass (84.49 s); Ruff clean;
+  `tsc --noEmit` clean; static export succeeds; `alembic check` clean. June generation
+  stored 43,200 minute buckets, five incidents and 900 selected 1 Hz frames in 6.16 s;
+  the cache returned the same run in 0.073 s. A freshly restarted real API and the
+  browser UI both reported 100% coverage and five recurrences, with one missing,
+  rejected, ineffective, unknown and improved action each; raw responses had zero
+  forbidden-field hits. Full evidence in `docs/validation.md`.
+- Decisions/deviations from this specification: command links use
+  `incident_events.evidence_ids` because the existing command schema has no incident
+  column; template reviews are stored in `analyses` with mode `TEMPLATE`, but no provider,
+  queue or scheduler was added. Recorded in `docs/decisions.md`.
+- Missing credentials or external checks: no AI provider is needed or configured;
+  deployment remains unverified. Docker CLI was unavailable on this shell path, while
+  PostgreSQL remained reachable and its existing volume was untouched.
+- Known limitations: synthetic history is labelled fictional evidence; queries and tools
+  are intentionally capped; Phase 6 does not perform free-form interpretation or
+  periodic scheduling.
+- Next exact task: Phase 7 — add the live AI investigator and completed-period reviews on
+  top of the Phase 6 read-only tools and deterministic fallback. Preserve the storage-only
+  evidence boundary, implement provider timeouts/budgets/cache invalidation and keep the
+  template path available when AI is disabled. See `docs/handoff-phase7.md`.
 
 ### 2026-09-23 — Phase 5
 
