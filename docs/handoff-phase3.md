@@ -101,9 +101,24 @@ Suggested order, because each step is testable on its own:
 3. **Forecast** in `backend/app/forecasts/` — 30 simulated minutes, recomputed every 5 s
    and immediately on a new incident or command. Reuse `simulation/models.py`; it is pure
    and already shared for exactly this. Split integration at illumination boundaries using
-   `environment.schedule_boundaries()`. Run it off the event loop from an immutable
-   `truth.copy()`, keep at most one running plus one pending, and check the run and
-   revision still match before publishing.
+   `environment.schedule_boundaries()`.
+
+   **Build an observed-state estimator first** (section 7.6). The forecast starts from an
+   immutable snapshot of *that estimate* — assembled only from valid `TelemetryFrame`
+   readings, the known commands in frame context, and nominal configured parameters. It
+   must never be initialised from `SimulatorTruth`, `truth.copy()` or
+   `runs.private_checkpoint`: those carry the injected fault, and a forecast that has
+   already been told the answer proves nothing.
+
+   Initialise stored energy from the reported SOC estimate and reconcile against observed
+   current and load. Estimate the generation factor from observations rather than reading
+   it. Run the computation off the event loop, keep at most one running plus one
+   replaceable pending request, and confirm the run and control revision still match
+   before publishing — otherwise keep the result in history and label it stale.
+
+   Note: `truth.copy()` in `simulation/runner.py` is simulator-internal (checkpointing and
+   the tick snapshot) and is correct there. It must not cross into `forecasts/` or
+   `monitoring/`.
 4. **`REDUCE_PAYLOAD_POWER`** — baseline versus action from the *same* observed start.
    Set `enabled: true` in `actions.yaml` only once it is implemented and tested.
 5. **Proposal and command** — 30 s TTL, master-only, CSRF, idempotency key. The
