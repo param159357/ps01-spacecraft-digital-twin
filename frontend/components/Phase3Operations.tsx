@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { Panel, StatusBadge } from "@/components/primitives";
+import { InvestigationPanel } from "@/components/InvestigationPanel";
 
 interface Incident {
   id: string;
@@ -146,6 +147,7 @@ export function Phase3Operations() {
                 Compare branch isolation
               </button>
             </div>
+            <InvestigationPanel incidentId={active.id} />
           </div>
         ) : <p className="text-xs text-ink-faint">No active incident. Load D02 from the simulator.</p>}
       </Panel>

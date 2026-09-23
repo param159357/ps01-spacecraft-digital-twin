@@ -23,7 +23,7 @@ interface HistorySummary {
 
 interface ReviewResponse {
   analysis_id: string;
-  generation_mode: "TEMPLATE";
+  generation_mode: "LLM" | "TEMPLATE" | "REPLAY";
   status: string;
   cached: boolean;
   result: { title: string; findings: string[]; limitations: string[] };
@@ -80,9 +80,15 @@ export default function HistoryPage() {
     setBusy(true);
     setError(null);
     try {
-      setReview(await api.post<ReviewResponse>("/history/review", {
+      let next = await api.post<ReviewResponse>("/history/review", {
         source, period, start, end: period === "custom" && end ? end : null,
-      }));
+      });
+      setReview(next);
+      for (let attempt = 0; attempt < 30 && next.status !== "COMPLETED"; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        next = await api.get<ReviewResponse>(`/analyses/${next.analysis_id}`);
+        setReview(next);
+      }
     } catch (value) {
       setError(value instanceof ApiError ? value.message : "Review generation failed.");
     } finally {
@@ -103,7 +109,7 @@ export default function HistoryPage() {
       <ConsoleBody
         headline="History and recurrence"
         summary="Facts computed from stored observations. Every view names one dataset and one bounded UTC window; synthetic and live evidence are never combined."
-        pending={[{ title: "Live AI interpretation", phase: 7, what: "A provider-backed investigator may interpret these computed facts in Phase 7. The Phase 6 report below is deterministic." }]}
+        pending={[]}
       >
         <Panel title="Evidence selection" subtitle="Completed UTC periods only">
           <div className="flex flex-wrap items-end gap-3 text-xs">
@@ -158,12 +164,14 @@ export default function HistoryPage() {
             </Panel>
           </div>
 
-          <Panel title="Deterministic period report" subtitle="Saved and cached from computed facts; no LLM or provider" actions={<button className="rounded border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent disabled:opacity-50" disabled={busy} onClick={() => void generateReview()}>Generate review</button>}>
+          <Panel title="Bounded period review" subtitle="Queued separately from telemetry and cached by dataset and exact window" actions={<button className="rounded border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent disabled:opacity-50" disabled={busy} onClick={() => void generateReview()}>Generate review</button>}>
             {review ? <div className="space-y-2 text-sm text-ink-dim">
-              <div className="flex flex-wrap gap-2"><StatusBadge tone="accent">Template</StatusBadge>{review.cached ? <StatusBadge tone="nominal">Cached</StatusBadge> : null}</div>
-              <h3 className="font-semibold text-ink">{review.result.title}</h3>
-              <ul className="list-disc space-y-1 pl-5">{review.result.findings.map((finding) => <li key={finding}>{finding}</li>)}</ul>
-              <p className="text-xs text-ink-faint">{review.result.limitations.join(" ")}</p>
+              <div className="flex flex-wrap gap-2"><StatusBadge tone="accent">{review.generation_mode}</StatusBadge><StatusBadge tone={review.status === "COMPLETED" ? "nominal" : "warning"}>{review.status}</StatusBadge>{review.cached ? <StatusBadge tone="nominal">Cached</StatusBadge> : null}</div>
+              {review.status === "COMPLETED" ? <>
+                <h3 className="font-semibold text-ink">{review.result.title}</h3>
+                <ul className="list-disc space-y-1 pl-5">{review.result.findings.map((finding) => <li key={finding}>{finding}</li>)}</ul>
+                <p className="text-xs text-ink-faint">{review.result.limitations.join(" ")}</p>
+              </> : <p className="text-ink-faint">Review queued; deterministic evidence remains available above.</p>}
             </div> : <p className="text-sm text-ink-faint">Generate a citable template report for the selected evidence window.</p>}
           </Panel>
         </> : null}

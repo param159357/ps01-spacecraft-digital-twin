@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { Panel, StatusBadge, type StatusTone } from "@/components/primitives";
+import { InvestigationPanel } from "@/components/InvestigationPanel";
 
 export interface IncidentSummary {
   id: string;
@@ -210,6 +211,7 @@ export function IncidentPanel({ subsystemLabel }: { subsystemLabel: string }) {
             Recovery commands are executed by the master console only. This console can
             acknowledge and investigate within its own subsystem.
           </p>
+          <InvestigationPanel incidentId={detail.id} />
         </div>
       ) : null}
     </Panel>
