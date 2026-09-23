@@ -5,6 +5,50 @@ Newest first within each phase.
 
 ---
 
+## Phase 8 — essential integration checks
+
+### Hysteresis is applied by narrowing the limits while an incident is active
+
+`rules.yaml` had carried `hysteresis_c: 2.0` since Phase 1, with a comment spelling out the
+section 8.2 behaviour — "40 C warning recovers below 38 C" — and no code had ever read it.
+A temperature hovering on its operating limit therefore re-crossed on every sample and the
+incident oscillated between `OPEN` and `RECOVERING`.
+
+The band now narrows the operating limits *only while an incident is already active*, so
+the threshold to open is unchanged and the threshold to recover sits inside it. That keeps
+the asymmetry in one place rather than scattering two sets of limits through the rule, and
+it means a channel with no active incident is still judged against exactly the limits
+`telemetry.yaml` declares.
+
+### A CRITICAL thermal band is deliberately absent
+
+`critical_persistence_s: 2.0` was also configured and also unread. Section 7.3 illustrates
+a critical band at 45 °C for 2 s, but no channel carries a critical bound, so implementing
+the parameter would have meant inventing per-node thresholds for four nodes — a fixture
+design decision, not an integration fix. The parameter was removed and the reason recorded
+in `rules.yaml` itself. Thermal incidents are `WARNING` only: the severity a console shows
+is the severity the configuration can justify. Adding critical bounds per node remains a
+small, separate change.
+
+### Configuration that describes behaviour must be behaviour that exists
+
+Both of the above are the same lesson, and it is the one worth keeping: a parameter sitting
+in a validated configuration file reads as a promise about how the system behaves. Two of
+them had been quietly false since Phase 1, in a file whose whole purpose is to be the
+honest description of the vehicle. Anything added to `rules.yaml` or `spacecraft.yaml`
+should arrive with the code that reads it, or with a comment saying plainly that it does
+not yet.
+
+### The pending-panel pattern needs removing when the feature ships
+
+Phase 1 deliberately shipped honest "not built yet" panels rather than placeholder data.
+Phase 4 built the subsystem diagram and rendered it on the master console, but left the
+placeholder that announced the diagram as unbuilt sitting at the bottom of the same page.
+For four phases the master console simultaneously displayed the feature and denied having
+it. Only a browser review caught it — no test asserts the absence of a panel.
+
+---
+
 ## Phase 7 review — defects found by independent verification
 
 Two defects were found by reviewing the Phase 6/7 work against the repository rather than

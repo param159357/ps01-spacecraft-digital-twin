@@ -23,6 +23,21 @@ class IncidentEngine:
     incidents: dict[UUID, Incident] = field(default_factory=dict)
     _states: dict[tuple[UUID, str, str], _RuleState] = field(default_factory=dict)
 
+    @property
+    def _hysteresis_c(self) -> float:
+        rule = self.config.rules.by_id("THERMAL_LIMIT")
+        return float((rule.params if rule else {}).get("hysteresis_c", 0.0))
+
+    def _active(self, run_id: UUID, family: str, entity: str) -> Incident | None:
+        return next(
+            (
+                i
+                for i in self.incidents.values()
+                if i.dedup_key == (str(run_id), family, entity) and i.is_active
+            ),
+            None,
+        )
+
     def evaluate(self, frame: TelemetryFrame, forecast_crossing: bool = False) -> list[Incident]:
         signals: list[
             tuple[str, str, str, Subsystem, Severity, bool, str, str, float | None, str | None]
@@ -133,7 +148,16 @@ class IncidentEngine:
             meta = self.config.telemetry.by_id(channel)
             if isinstance(value, (int, float)) and meta:
                 lo, hi = meta.bounds.operating
-                bad = (lo is not None and value < lo) or (hi is not None and value > hi)
+                # Section 8.2: the recovery boundary sits inside the warning boundary, so
+                # a temperature hovering on its limit does not re-cross on every sample
+                # and flap the incident between OPEN and RECOVERING. The band only
+                # narrows the limits while an incident is already active.
+                band = self._hysteresis_c if self._active(frame.run_id, "THERMAL", channel) else 0.0
+                lo_limit = None if lo is None else lo + band
+                hi_limit = None if hi is None else hi - band
+                bad = (lo_limit is not None and value < lo_limit) or (
+                    hi_limit is not None and value > hi_limit
+                )
                 signals.append(
                     (
                         "THERMAL_LIMIT",
@@ -204,14 +228,7 @@ class IncidentEngine:
     ) -> Incident | None:
         key = (frame.run_id, family, entity)
         state = self._states.setdefault(key, _RuleState())
-        active = next(
-            (
-                i
-                for i in self.incidents.values()
-                if i.dedup_key == (str(frame.run_id), family, entity) and i.is_active
-            ),
-            None,
-        )
+        active = self._active(frame.run_id, family, entity)
         rule = self.config.rules.by_id(rule_id)
         persistence = float(
             (rule.params if rule else {}).get(

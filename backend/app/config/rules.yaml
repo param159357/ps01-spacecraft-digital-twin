@@ -6,7 +6,7 @@
 #
 # All thresholds are starting test values for a fictional vehicle, not flight limits.
 
-config_version: "rules-0.3.0"
+config_version: "rules-0.4.0"
 
 defaults:
   healthy_dwell_s: 10.0        # missing data must never satisfy healthy dwell
@@ -61,9 +61,13 @@ rules:
     description: Valid node temperature persists beyond its own configured operating limits.
     params:
       persistence_s: 10.0
-      critical_persistence_s: 2.0
       hysteresis_c: 2.0                 # 40 C warning recovers below 38 C
       per_node_limits_from: telemetry.yaml
+      # A CRITICAL thermal band is deliberately absent. Section 7.3 illustrates one at
+      # 45 C for 2 s, but no channel carries a critical bound, so the rule would have to
+      # invent per-node thresholds. Thermal incidents are WARNING only; the severity a
+      # console shows is the severity the configuration can justify. An earlier
+      # `critical_persistence_s` was removed because nothing read it.
 
   - id: ACTUATOR_MISMATCH
     family: COMMAND_RESPONSE

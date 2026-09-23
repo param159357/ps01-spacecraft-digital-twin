@@ -5,6 +5,98 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 8 — essential integration checks
+
+**Date:** 2026-09-23
+**Method:** section 13.2 was worked through item by item. Anything the suite already
+proved is listed with the test that proves it; anything it did not was either newly
+tested or driven through a real Uvicorn server and a browser. The server ran against
+`ps01_test`, so the development database and its accounts were untouched.
+
+### Build and static checks
+
+| # | Check | Command | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `pytest -q` | **124 passed**, 70.68 s (112 before this phase) |
+| 2 | Lint | `ruff check app tests ../scripts` | All checks passed |
+| 3 | Frontend types | `npx tsc --noEmit` | exit 0 |
+| 4 | Static export | `npm run build` | exit 0, 9 routes |
+| 5 | Schema drift | `alembic check` | No new upgrade operations detected |
+
+### Section 13.2, item by item
+
+| Requirement | How it is covered | Result |
+|---|---|---|
+| Independent energy reference | `test_energy_reference_over_1800_seconds` | 52.6316 Wh |
+| Thermal step response | `test_explicit_integration_matches_the_analytic_step_response` | matches closed form |
+| Pressure reference | `test_pressure_reference` | 17.1046 bar |
+| Full / empty battery | `test_charging_respects_capacity_and_curtails`, `test_empty_battery_sheds_optional_load_instead_of_pretending` | pass |
+| Non-negative available mass | `test_consumption_is_clamped_to_available_mass` | pass |
+| Normal eclipse / curtailment | `test_normal_eclipse_does_not_open_generation_shortfall` | no false incident |
+| **Persistence** | **new** `test_a_transient_excursion_does_not_open_an_incident` + `test_a_persistent_excursion_does_open_an_incident` | a one-second excursion opens nothing; a sustained one opens after the configured 10 s |
+| **Hysteresis** | **new** `test_a_thermal_incident_does_not_flap_around_its_limit` | **found a defect — see below** |
+| One continuing incident | `test_continuing_supply_fault_is_one_incident_and_recovers_after_dwell` | pass |
+| **Stale data** | **new** three tests, plus live | see the live table |
+| No-action vs action from one observed start | `test_payload_action_forecast_uses_same_observed_start_and_improves_reserve`, and live | see the live table |
+| **Expired proposal rejected** | **new** unit test, plus live HTTP | **409** `PROPOSAL_CONFLICT` |
+| Double click applies once | `test_idempotent_command_is_one_record_and_measured_drop_is_improved`, and live | one record |
+| Accepted ≠ recovered | `test_a_failed_isolator_applies_the_command_and_changes_nothing` | `APPLIED` + `NO_CHANGE` |
+| Roles and hidden truth | `test_auth.py`, `test_simulation_api.py`, and live | see the live table |
+| Stream: shared run, reconnect, reset | **live, five concurrent clients** | see the live table |
+| AI bounds, citations, fallback | `test_phase7.py`, and live | `TEMPLATE` / `PROVIDER_NOT_CONFIGURED` |
+| History counting, window, coverage | `test_phase6.py`, and live | see the live table |
+| UI at both target sizes | **browser** | **found a defect — see below** |
+
+### Live, against a real Uvicorn server
+
+| # | Check | Result |
+|---|---|---|
+| 6 | **Five concurrent SSE clients**, one per role | all five received one shared run id and the **identical frame sequence 1–12**; channel counts role-filtered: master 28, simulator 28, flight 22, power 20, thermal 20 |
+| 7 | Late joiner mid-run | received a snapshot at **frame 56**, the current state, not a replay from frame 1 |
+| 8 | Reset while three clients attached | every client received `run_changed` (PAUSED then RUNNING) with the new run id, then telemetry restarting at frame 1 of the new run |
+| 9 | D02 comparison | baseline crosses `SOC_WARNING` at +690 s and `SOC_CRITICAL` at +1590 s; with payload reduction `SOC_WARNING` at +870 s and **no critical crossing** |
+| 10 | Double-click approval | both clicks returned command `4be322f4` `ACCEPTED` — one record |
+| 11 | Measured recovery | `APPLIED` at tick 162, outcome **IMPROVED**, load **379.7 → 300.2 W** |
+| 12 | Expired proposal (TTL 30 s) | after 33 s: **HTTP 409** `{"error":"PROPOSAL_CONFLICT","message":"The proposal has expired; compare again."}` |
+| 13 | Role and CSRF boundaries | power compare on a power incident **200**; flight compare on it **403**; power submitting a command **403**; master compare without CSRF **403**; master compare from a foreign origin **403**; unauthenticated `/incidents` **401**; master reading `/simulator/state` **403** |
+| 14 | Contact loss outside a scheduled pass | run stayed **RUNNING** and advanced to sim_time 3250 while the last delivered frame was 3241 — readings aged, the app stayed connected, and `DATA_STALE` correctly stayed quiet because contact was not expected |
+| 15 | Contact loss **inside** a scheduled pass | `DATA_STALE` opened, escalated to **CRITICAL** at 13 s, and moved to **RESOLVED** after contact returned and the 10 s healthy dwell elapsed |
+| 16 | AI disabled | investigation `COMPLETED`, mode `TEMPLATE`, `fallback_reason: PROVIDER_NOT_CONFIGURED`, attempts 0, one observation cited to its incident, trail `get_incident_evidence → get_forecast_comparison` |
+| 17 | History scoping | master 5 distinct / 0 hidden; flight 0 distinct / 5 hidden; coverage 100% for both |
+| 18 | Hidden-truth scan | **0 hits** for all nine forbidden field names across incidents, run snapshot, forecast, proposal, command, analysis and history responses |
+
+### Browser review at 1366×768 and 1920×1080
+
+Login, role routing and both target sizes were inspected in a browser.
+
+- `master` signed in and landed on `/master/`; `power` landed on `/power/`; `power` visiting `/master/` was bounced back; a signed-in account visiting `/login/` was redirected to its own console.
+- Master console at 1366×768 and 1920×1080: no clipping, no overlap; the subsystem diagram stays within its column at the larger size.
+- The master incident panel showed the `WARNING · OPEN` incident, both comparison actions, the `TEMPLATE` badge with "Template fallback; provider not configured", cited observations, missing evidence, next checks and the evidence trail; the forecast panel showed "Projected reserve at horizon: 18.7%" and "Crossing: SOC_WARNING in about 13 min".
+- The power console showed the same incident under "Power scope / 1 ACTIVE" with acknowledge but no approval control.
+- The history console selected the synthetic June month and displayed 5 distinct incidents, 100% coverage, the `ACTUATOR_MISMATCH / OPTIONAL_A` recurrence row and all five command-outcome categories.
+
+### Defects found and fixed
+
+| Defect | Evidence | Status |
+|---|---|---|
+| **Thermal incidents flapped on their limit.** `rules.yaml` configured `hysteresis_c: 2.0` with the comment "40 C warning recovers below 38 C", but no code read it, so the incident moved to `RECOVERING` the moment the temperature fell 0.5 °C below the limit | new test showed `['RECOVERING'] × 6` where the band requires `OPEN` | **Fixed**: the limits narrow by the band while an incident is active; it now stays `OPEN` inside the band and only recovers once it clears it |
+| **The master console still showed a "Vehicle diagram — Phase 4" placeholder** reading "No data is shown here because none exists yet", while the Phase 4 diagram it referred to was rendering higher up the same page | seen in the browser | **Fixed**: the stale panel and its unused import removed |
+| **`critical_persistence_s` was configured but unimplemented** | grep: no code reference | **Removed** from `rules.yaml`, with a comment stating why a CRITICAL thermal band is absent. `rules-0.4.0` |
+
+### Observations, not defects
+
+- The synthetic month files `ACTUATOR_MISMATCH` under `POWER` with entity `OPTIONAL_A`, while the live rule files it under `THERMAL_PROPULSION` with entity `battery_heater`. These are different entities under one rule family and `find_similar_incidents` keys on both, so they cannot be confused; the demonstration recurrence therefore appears on the power console.
+- Running the test suite while a server holds `ps01_test` makes the suite hang: the fixture cannot recreate the database. Stop the API before running tests.
+
+### Not verified
+
+- **No real LLM call.** `AI_ENABLED=false`, provider and model blank, `LLM_API_KEY` empty. `TEMPLATE` is still the only mode this machine has produced.
+- **No deployment.** Nothing beyond the local `db` container has run; the API image, Caddy and the proxied SSE path remain unverified.
+- **No physical five-laptop rehearsal**, and no 10–15 minute five-client soak. Five concurrent SSE clients were verified for a bounded window and two browser sessions were used; the sustained rehearsal belongs to Phase 9 and is **pending**.
+- `PRESSURE_INCONSISTENCY`, `FLIGHT_PROFILE_DEVIATION` and `RESET_RECURRENCE` remain unimplemented and are reported as such by `/api/config/coverage`.
+
+---
+
 ## Phase 6/7 independent review and two fixes
 
 **Date:** 2026-09-23

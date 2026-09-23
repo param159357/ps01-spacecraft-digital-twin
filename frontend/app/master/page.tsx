@@ -2,7 +2,7 @@
 
 import { AppShell, headerFromLive } from "@/components/AppShell";
 import { LiveChart } from "@/components/LiveChart";
-import { Panel, PendingPanel, StatusBadge } from "@/components/primitives";
+import { Panel, StatusBadge } from "@/components/primitives";
 import { ChannelReadout, ChannelTableRow, useChannelMeta } from "@/components/telemetry";
 import { Phase3Operations } from "@/components/Phase3Operations";
 import { SubsystemDiagram } from "@/components/SubsystemDiagram";
@@ -269,13 +269,6 @@ export default function MasterConsole() {
         </Panel>
 
         <Phase3Operations />
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <PendingPanel
-            title="Vehicle diagram"
-            phase={4}
-            what="Compact 2D subsystem diagram with the key value per subsystem."
-          />
-        </div>
       </div>
     </AppShell>
   );

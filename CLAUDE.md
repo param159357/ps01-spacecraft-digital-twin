@@ -903,7 +903,7 @@ This delivered specification does not inspect or assert implementation status in
 | 5 | COMPLETE | `docs/validation.md` Phase 5: 103 backend tests pass; D04 live gives IMPROVED with load 330.7 -> 179.7 W, and with a failed isolator gives APPLIED + NO_CHANGE with load unmoved; D03 escalates WARNING -> CRITICAL; no permanent-damage claim | Phase 5 done |
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
-| 8 | NOT_STARTED | None recorded here | Essential checks |
+| 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
 | 9 | NOT_STARTED | None recorded here | Deploy and rehearse |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
@@ -919,6 +919,55 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 8
+
+- Status: COMPLETE.
+- Implemented/files changed:
+  - `monitoring/engine.py` — thermal hysteresis. The configured band narrows a node's
+    operating limits only while an incident is active, so the threshold to open is
+    unchanged and the threshold to recover sits inside it. The active-incident lookup was
+    extracted to `_active()` and is now shared by the rule and the lifecycle code.
+  - `config/rules.yaml` — removed `critical_persistence_s`, which nothing read, and
+    recorded in the file why a CRITICAL thermal band is absent. `rules-0.4.0`.
+  - `frontend/app/master/page.tsx` — removed the "Vehicle diagram — Phase 4" placeholder
+    that had been announcing the subsystem diagram as unbuilt while the diagram rendered
+    higher up the same page.
+  - `tests/test_phase8.py` — nine checks for the section 13.2 items no earlier phase
+    exercised: rule persistence in both directions, hysteresis in both directions, stale
+    telemetry opening and escalating during expected contact, an expected contact gap
+    staying quiet, and expired-proposal and stale-control rejection.
+- Checks actually run and results: 124 backend tests pass (70.68 s); ruff, `tsc --noEmit`,
+  `npm run build` (9 routes) and `alembic check` all clean. Against a real Uvicorn server:
+  five concurrent SSE clients received one shared run and the identical frame sequence
+  1–12 with role-filtered channel counts (28/28/22/20/20); a late joiner received a
+  snapshot at frame 56 rather than a replay; a reset reached every attached client as
+  `run_changed` followed by frame 1 of the new run; D02 projected a critical crossing at
+  +1590 s with no action against none at all with payload reduction, applied once on a
+  double click, and measured 379.7 → 300.2 W with outcome `IMPROVED`; an expired proposal
+  returned 409; contact loss inside a scheduled pass opened `DATA_STALE`, escalated it to
+  CRITICAL and resolved it after dwell, while outside a pass it correctly stayed quiet;
+  every role, CSRF and origin boundary returned its expected status; and a hidden-field
+  scan over every operational response returned zero hits. Login, role routing and both
+  target screen sizes were reviewed in a browser. Full tables in `docs/validation.md`.
+- Decisions/deviations from this specification: a CRITICAL thermal band is deliberately
+  not implemented, because no channel carries a critical bound and adding one means
+  inventing per-node thresholds rather than fixing an integration defect. Recorded in
+  `docs/decisions.md` and in `rules.yaml` itself.
+- Missing credentials or external checks: unchanged. No authorized provider key, so
+  `LLM` mode is still unvalidated and `TEMPLATE` remains the only mode this machine has
+  produced. No deployment host, so the API image, Caddy and the proxied SSE path are
+  still unverified.
+- Known limitations: no physical five-laptop rehearsal and no 10–15 minute five-client
+  soak — both belong to Phase 9 and are pending, not passed. `PRESSURE_INCONSISTENCY`,
+  `FLIGHT_PROFILE_DEVIATION` and `RESET_RECURRENCE` remain unimplemented. The Phase 7
+  investigation dedup issue recorded in the previous entry is still open. Running the
+  test suite while a server holds `ps01_test` hangs the suite, because the fixture cannot
+  recreate the database; stop the API first.
+- Next exact task: Phase 9 — deploy to an authorized persistent target, verify the five
+  account routes, direct refresh, streaming, the action flow and history through the
+  deployed URL, then run the 10–15 minute five-client rehearsal and write the demo and
+  fallback instructions. A host and any required spending authorization are still needed.
 
 ### 2026-09-23 — Phase 6/7 review and fixes
 
