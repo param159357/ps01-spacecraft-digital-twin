@@ -139,7 +139,6 @@ def generate_synthetic_month(
         control_revision=0,
         label=label,
         ended_at=end,
-        private_checkpoint=None,
     )
     db.add(run)
     db.flush()

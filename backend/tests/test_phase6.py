@@ -156,7 +156,6 @@ def test_long_incident_is_counted_once_even_with_many_events(session_factory, en
             control_revision=0,
             label="long-incident-test",
             ended_at=datetime(2026, 9, 1, tzinfo=UTC),
-            private_checkpoint=None,
         )
         db.add(run)
         db.flush()
