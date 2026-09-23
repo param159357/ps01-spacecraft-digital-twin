@@ -14,7 +14,7 @@ recorded as passing because it "should" pass.
 
 | # | Check | Command / method | Result |
 |---|---|---|---|
-| 1 | Full backend suite | `pytest -q` | **79 passed**, 0 failed, 60.83 s |
+| 1 | Full backend suite | `pytest -q` | **79 passed**, 0 failed, final run 58.15 s |
 | 2 | Phase 3 focused suite | `pytest tests/test_phase3.py -q` | **5 passed** |
 | 3 | Backend lint | `ruff check app tests ../scripts` | **All checks passed** |
 | 4 | Frontend types | `npx tsc --noEmit` | **exit 0** |
@@ -28,6 +28,8 @@ recorded as passing because it "should" pass.
 | 12 | D02 through browser UI and storage | simulator D02 preset → master compare/approve | run `703c743a`: reserve projection **19.7% baseline vs 23.9% action**; measured load **380.3 → 299.6 W**; command `APPLIED`, outcome **IMPROVED**, incident entered recovery |
 | 13 | API restarted after backend correction | stopped old Uvicorn, started one worker without `--reload`, repeated D02 | corrected outcome visible through the running API and browser |
 | 14 | Port/storage preflight | listener checks plus TCP probe | ports 3000/8000 free before initial server start; PostgreSQL answered on 5432; existing database/volume was not stopped or deleted |
+| 15 | Migration/model drift | `alembic check` | **No new upgrade operations detected** |
+| 16 | Final live API restart | one Uvicorn worker, no `--reload`; `GET /api/health` | **200 `{"status":"ok"}`** after the last backend change; app servers then stopped, ports 3000/8000 free, PostgreSQL still answering on 5432 |
 
 ### Acceptance criteria for Phase 3
 
