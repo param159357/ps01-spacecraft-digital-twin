@@ -4,9 +4,10 @@ For whoever picks up next, human or another AI assistant. `CLAUDE.md` is the
 specification and takes precedence over this file; this only adds the things a fresh
 reader would otherwise have to rediscover the hard way.
 
-**State:** Phases 1 and 2 are COMPLETE and verified (`docs/validation.md`). Commit
-`2f801f0`, pushed to a private GitHub repo. 74 backend tests pass, ruff clean, `tsc`
-clean, static export builds.
+**State:** Phases 1 and 2 are COMPLETE and verified (`docs/validation.md`). The code
+landed in commit `2f801f0`; later commits are documentation only. Pushed to a private
+GitHub repo. 74 backend tests pass, ruff clean, `tsc` clean, static export builds.
+Check `git log` for the actual head rather than trusting a hash written in a document.
 
 ---
 
@@ -36,6 +37,23 @@ are not stored in the repo; re-run it with `--reset-passwords` if they are lost.
 
 Tests: `cd backend && ./.venv/Scripts/python.exe -m pytest -q` (needs the `db` container;
 they use a separate `ps01_test` database).
+
+**The API runs without `--reload`, deliberately** — one process owns the simulation loop,
+and autoreload would fork a second one. So **restart Uvicorn after every backend change**
+or you will be testing stale code and chasing a bug that is not there. A previous session
+may have left servers running: check ports 3000 and 8000 before starting your own.
+
+```bash
+# what is listening
+netstat -ano | grep -E ":(3000|8000|5432).*LISTENING"
+# stop a leftover server (PowerShell)
+Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='node.exe'" |
+  Where-Object { $_.CommandLine -like "*BINARY*" } | Stop-Process -Force
+```
+
+Keep the PostgreSQL container running. `docker compose down` is safe; **never
+`docker compose down -v`** — the `-v` flag deletes the `ps01_pgdata` volume and every
+stored run with it.
 
 ---
 
