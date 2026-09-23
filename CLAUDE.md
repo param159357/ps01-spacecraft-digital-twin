@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | BLOCKED | `docs/validation.md` Phase 9: fresh-server readiness is complete — reproducible Node 24 static export, guarded Caddy start, container-native account/history CLIs, pinned Gemini SDK/adapter, 130 backend tests, clean ruff/tsc/export/alembic, rebuilt API image and actual cached container history generation. Earlier local Compose/SSE/restart/persistence evidence remains valid. | **Blocked on authorized VPS/domain details.** Public HTTPS, secure-cookie sessions, private account provisioning, exact Gemini model/live call, 10–15 minute deployed five-client rehearsal and physical five-laptop rehearsal remain pending. |
+| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: a real Google Cloud deployment confirmed the authorized Gemini key/model and function-call turn, then exposed incompatible structured schemas and a wrong Caddy export mount. Provider-only recursive schema conversion and the `.next-export` mount are fixed; 132 backend tests, Ruff, TypeScript, export, Alembic and Compose validation pass. Earlier local SSE/restart/persistence evidence remains valid. | Redeploy the corrected commit; verify real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining deployed rehearsal. Physical five-laptop rehearsal remains pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -920,6 +920,39 @@ Append compact session entries:
 - Next exact task:
 ```
 
+### 2026-09-24 — Phase 9 (hosted defect correction)
+
+- Status: IN_PROGRESS. Two defects from the real Google Cloud deployment are fixed and
+  locally validated; the corrected commit still needs hosted re-verification. Phase 10
+  was not started.
+- Implemented/files changed:
+  - `backend/app/analysis/provider.py` — a Gemini-only recursive schema-copy conversion
+    removes every `additionalProperties` key before `response_json_schema`. Strict
+    Pydantic parsing, citation validation and action validation are unchanged.
+  - `backend/tests/test_phase9_gemini.py` — nested conversion plus incident and history
+    schema-path coverage.
+  - `compose.yaml`, `frontend/package.json`, deployment docs — Caddy and the static serve
+    command use the actual `frontend/.next-export` build directory, without a symlink.
+- Checks actually run and results: Gemini-focused **6 passed**; full backend **132 passed**
+  in 121.74 s with explicit disposable test settings; documented Ruff scope clean;
+  TypeScript clean; `npm run build` exported 9 routes and produced
+  `.next-export/index.html` (5,545 bytes); Alembic clean; Compose config validation exit 0
+  using an explicit empty env source and non-secret placeholder.
+- Deployment evidence supplied by the user: the authorized key and exact model
+  `gemini-3.5-flash` pass basic generation and the first function-calling turn. Before
+  this fix, both incident and history structured-output turns returned HTTP 400 on
+  `additionalProperties`. A fresh server build produced `.next-export`, while Compose
+  mounted `out`.
+- Decisions/deviations: compatibility is handled only at the Gemini provider boundary;
+  the application schema is not weakened. The built directory is mounted directly and no
+  symlink is introduced.
+- Missing external checks: redeploy and verify one real structured incident investigation
+  and one structured history review, then finish the hosted/public and rehearsal checks.
+- Known limitations: no post-fix live `generation_mode=LLM` result is claimed; physical
+  five-laptop rehearsal remains pending.
+- Next exact task: deploy this commit to Google Cloud and repeat the two Gemini structured
+  paths plus public Caddy route checks. Stop after Phase 9.
+
 ### 2026-09-23 — Phase 9 (fresh-server readiness continuation)
 
 - Status: local deployment readiness COMPLETE; hosted Phase 9 remains BLOCKED pending an
@@ -933,12 +966,14 @@ Append compact session entries:
   - `operations.py` — evidence revisions advance only for meaningful incident transitions,
     restoring incident/revision deduplication before provider spend is enabled.
   - `compose.yaml` — passes the backend-only Gemini key and prevents Caddy from starting
-    without `frontend/out/index.html`.
+    without the exported index. The later hosted correction records the actual
+    `.next-export/index.html` path.
   - README and demo/decision/validation records — fresh-clone order, private password/key
     handling and actual check results.
 - Checks actually run and results: **130 backend tests passed** in 125.79 s; Phase 9
   provisioning 2 passed and Gemini 4 passed; Ruff and TypeScript clean; Next static export
-  succeeded for 9 application routes and produced `out/index.html`; Alembic reported no
+  succeeded for 9 application routes; the later hosted correction records the actual
+  `.next-export/index.html` path. Alembic reported no
   drift. The rebuilt 102,288,045-byte API image includes the pinned SDK. Both container CLI
   entry points ran; an actual isolated completed-month generation produced 44,640 minute
   rows, 4 incidents and 900 bounded 1 Hz frames, then returned the identical cached run on

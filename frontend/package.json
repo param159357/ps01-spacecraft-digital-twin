@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "cross-env NEXT_EXPORT=1 next build",
-    "start": "npx serve out",
+    "start": "npx serve .next-export",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

@@ -11,7 +11,7 @@ import pytest
 from google.genai import types
 
 from app.analysis.contracts import InvestigationOutput, validate_citations
-from app.analysis.provider import GeminiProvider, ProviderError
+from app.analysis.provider import GeminiProvider, ProviderError, _gemini_response_schema
 from app.config.settings import Settings
 
 
@@ -68,6 +68,32 @@ def _valid_output(evidence_id: str = "incident:abc") -> dict:
     }
 
 
+def _contains_key(value, target: str) -> bool:
+    if isinstance(value, dict):
+        return target in value or any(_contains_key(child, target) for child in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(child, target) for child in value)
+    return False
+
+
+def test_gemini_schema_conversion_removes_nested_additional_properties_from_a_copy():
+    original = {
+        "additionalProperties": False,
+        "$defs": {
+            "Nested": {
+                "type": "object",
+                "additionalProperties": False,
+                "items": [{"additionalProperties": True, "type": "object"}],
+            }
+        },
+    }
+
+    converted = _gemini_response_schema(original)
+
+    assert _contains_key(converted, "additionalProperties") is False
+    assert _contains_key(original, "additionalProperties") is True
+
+
 def test_gemini_converts_calls_continues_with_results_and_validates_output():
     client = _Client(
         [
@@ -107,6 +133,33 @@ def test_gemini_converts_calls_continues_with_results_and_validates_output():
         "get_forecast_comparison",
     }
     assert client.models.calls[1]["config"].response_mime_type == "application/json"
+    investigation_schema = client.models.calls[1]["config"].response_json_schema
+    assert _contains_key(investigation_schema, "additionalProperties") is False
+    assert client.closed is True
+
+
+def test_gemini_history_review_uses_the_compatible_schema():
+    output = {
+        "title": "Stored history review",
+        "findings": ["One stored recurrence was observed."],
+        "limitations": ["No hidden cause was inferred."],
+    }
+    client = _Client([_response(output=output)])
+    provider = GeminiProvider(
+        Settings(
+            LLM_MODEL="authorized-test-model",
+            GEMINI_API_KEY="test-key",
+            AI_MAX_PROVIDER_ATTEMPTS=1,
+        ),
+        client=client,
+    )
+
+    review, _, attempts = asyncio.run(provider.review({"dataset": "SYNTHETIC"}))
+
+    assert review.title == output["title"]
+    assert attempts == 1
+    history_schema = client.models.calls[0]["config"].response_json_schema
+    assert _contains_key(history_schema, "additionalProperties") is False
     assert client.closed is True
 
 

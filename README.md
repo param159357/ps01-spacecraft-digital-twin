@@ -160,7 +160,7 @@ observation mismatch detectable later.
 cd backend && ./.venv/Scripts/python.exe -m pytest -q          # backend tests
 cd backend && ./.venv/Scripts/python.exe -m ruff check app tests ../scripts
 cd frontend && npx tsc --noEmit                                # type check
-cd frontend && npm run build                                   # static export -> frontend/out
+cd frontend && npm run build                         # static export -> frontend/.next-export
 ```
 
 The backend tests repoint `DATABASE_URL` at a separate `ps01_test` database before any
@@ -176,19 +176,19 @@ The export build writes to `.next-export`, separate from the dev server's `.next
 ## Deployed demo stack
 
 For a fresh Linux server clone, install Node.js **24.x** and npm, then build the ignored
-static export from the committed lock file. Generated `frontend/out` is deliberately not
+static export from the committed lock file. Generated `frontend/.next-export` is deliberately not
 committed or transferred:
 
 ```bash
 cd frontend
 npm ci
 npm run build
-test -f out/index.html
+test -f .next-export/index.html
 cd ..
 docker compose up -d --build
 ```
 
-Caddy refuses to start when `frontend/out/index.html` is missing. It serves that export
+Caddy refuses to start when `frontend/.next-export/index.html` is missing. It serves that export
 and proxies `/api` to the API container, including Server-Sent Events. The API container
 automatically runs `alembic upgrade head`; do not add a second manual migration step.
 

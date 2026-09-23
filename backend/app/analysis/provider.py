@@ -55,6 +55,25 @@ def _output_schema() -> dict[str, Any]:
     return InvestigationOutput.model_json_schema()
 
 
+def _gemini_response_schema(value: Any) -> Any:
+    """Return a Gemini-compatible copy without weakening local validation.
+
+    Pydantic emits ``additionalProperties`` at the root and inside ``$defs`` for our
+    ``extra='forbid'`` models. Gemini rejects that keyword in ``response_json_schema``.
+    The provider receives a recursively filtered copy; Pydantic still validates the
+    response against the original strict models afterwards.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _gemini_response_schema(child)
+            for key, child in value.items()
+            if key != "additionalProperties"
+        }
+    if isinstance(value, list):
+        return [_gemini_response_schema(child) for child in value]
+    return value
+
+
 class OpenAIProvider:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -273,7 +292,7 @@ class GeminiProvider:
                     "present in the supplied tool results and only configured action IDs."
                 ),
                 response_mime_type="application/json",
-                response_json_schema=_output_schema(),
+                response_json_schema=_gemini_response_schema(_output_schema()),
                 max_output_tokens=self.settings.llm_max_output_tokens,
             )
             second = await self._request(
@@ -300,7 +319,9 @@ class GeminiProvider:
                     "numbers exactly, distinguish missing coverage, and do not infer hidden causes."
                 ),
                 response_mime_type="application/json",
-                response_json_schema=HistoryReviewOutput.model_json_schema(),
+                response_json_schema=_gemini_response_schema(
+                    HistoryReviewOutput.model_json_schema()
+                ),
                 max_output_tokens=self.settings.llm_max_output_tokens,
             )
             response = await self._request(json.dumps(summary), config)

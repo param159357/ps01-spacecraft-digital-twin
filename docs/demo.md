@@ -40,7 +40,7 @@ lock file before starting Caddy:
 cd frontend
 npm ci
 npm run build
-test -f out/index.html
+test -f .next-export/index.html
 cd ..
 docker compose up -d --build
 docker compose exec api python -m app.cli.generate_history --completed-month
@@ -48,9 +48,9 @@ docker compose exec api python -m app.cli.generate_history --completed-month
 
 The API applies migrations automatically before Uvicorn starts. Do not add a separate
 migration command. Repeating the history command returns the same cached synthetic month.
-Caddy also refuses to start if `frontend/out/index.html` is absent.
+Caddy also refuses to start if `frontend/.next-export/index.html` is absent.
 
-Caddy serves `frontend/out` and proxies `/api` to the API container, including SSE, so the
+Caddy serves `frontend/.next-export` and proxies `/api` to the API container, including SSE, so the
 browser sees one origin. Open the site at `SITE_ADDRESS` from `.env` — `http://localhost:8080`
 by default.
 

@@ -5,15 +5,46 @@ recorded as passing because it "should" pass.
 
 ---
 
-## Phase 9 — deployment stack (local readiness complete; hosted checks pending)
+## Phase 9 — deployment stack (hosted defect correction; re-verification pending)
 
-**Date:** 2026-09-23
-**Status:** all repository work needed for a fresh-server deployment is implemented and
-validated locally. The hosted deployment remains **BLOCKED** pending an authorized SSH
-target/domain, so there is still no public URL, HTTPS or `COOKIE_SECURE=true` verification.
+**Dates:** 2026-09-23–2026-09-24
+**Status:** a real Google Cloud deployment exposed two repository defects. Both are fixed
+and the complete local check set passes. The corrected commit still needs to be deployed
+and the public structured-output/Caddy paths re-verified before Phase 9 can be complete.
 
-Everything below ran against the real Compose stack — `ps01-api` image, Caddy and
-PostgreSQL — reached through Caddy on `http://localhost:8080`, not against a dev server.
+The earlier Compose measurements below ran against the real local stack — `ps01-api`
+image, Caddy and PostgreSQL — reached through Caddy on `http://localhost:8080`, not against
+a dev server.
+
+### 2026-09-24 hosted deployment defects and local correction
+
+Confirmed on the real deployment before this fix: the authorized Gemini key and exact
+model `gemini-3.5-flash` completed basic generation and the first evidence-tool selection
+turn. Both the incident investigation and history review structured-output turns failed
+with HTTP 400 because their Pydantic JSON schemas contained `additionalProperties`, which
+Gemini rejects. Also, `npm run build` wrote `frontend/.next-export/index.html` while
+Compose mounted `frontend/out`, leaving a fresh Caddy container without the built site.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Focused Gemini tests | `./.venv/Scripts/python.exe -m pytest -q tests/test_phase9_gemini.py`: **6 passed**; nested removal, investigation schema and history schema explicitly asserted |
+| 2 | Full backend suite | isolated disposable test settings and local test database: **132 passed** in **121.74 s** |
+| 3 | Documented Ruff scope | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts`: **all checks passed** |
+| 4 | TypeScript | `npx tsc --noEmit`: exit 0 |
+| 5 | Frontend production export | `npm run build`: exit 0, **9 application routes**; actual `frontend/.next-export/index.html` exists, **5,545 bytes** |
+| 6 | Schema drift | `./.venv/Scripts/python.exe -m alembic check`: **no new upgrade operations detected** |
+| 7 | Compose validation | `docker compose --env-file NUL config --quiet` with a temporary non-secret session placeholder: exit 0; no repository environment file or API key was read or printed |
+
+The Gemini conversion is provider-only and recursively removes every
+`additionalProperties` key from a copied response schema. The original Pydantic
+`extra="forbid"` contracts, response model validation, evidence-ID checks and supported
+action-ID checks are unchanged. Both Gemini response paths use the converted schema;
+OpenAI remains unchanged.
+
+No post-fix live Gemini request was run from this workstation, so a successful
+`generation_mode=LLM` structured investigation and history review remain pending after
+the corrected commit is deployed. The pre-fix provider successes and HTTP 400 failures
+are recorded as supplied deployment evidence, not converted into a success claim.
 
 ### Fresh-server readiness added after the original local stack check
 
@@ -25,12 +56,12 @@ PostgreSQL — reached through Caddy on `http://localhost:8080`, not against a d
 | 4 | Gemini adapter tests | **4 passed**: tool conversion/result continuation, structured output, bad citation rejection, timeout/provider error, budget readiness and secret-safe error text |
 | 5 | Ruff | `./.venv/Scripts/python.exe -m ruff check app tests ../scripts`: all checks passed |
 | 6 | TypeScript | `npx tsc --noEmit`: exit 0 |
-| 7 | Static export | Node **24.19.0**, npm **11.17.0**; `npm run build`: exit 0, **9 application routes**; `frontend/out/index.html` exists |
+| 7 | Static export | Node **24.19.0**, npm **11.17.0**; `npm run build`: exit 0, **9 application routes**; corrected path is `frontend/.next-export/index.html` |
 | 8 | Schema drift | `./.venv/Scripts/python.exe -m alembic check`: no new upgrade operations |
 | 9 | API image | `docker compose build api`: success with pinned `google-genai==2.25.0`; image ID `d156a20b…`, **102,288,045 bytes** |
 | 10 | Container CLIs | both `python -m app.cli.seed_users --help` and `python -m app.cli.generate_history --help` ran inside the API container |
 | 11 | Actual container history path | isolated `ps01_test` database: completed August 2026 generated **44,640 minute rows**, **4 incidents**, **900 selected 1 Hz frames** in **8.516 s**; identical repeat returned `cached: true` in **0.099 s** with the same run ID |
-| 12 | Updated local stack | existing PostgreSQL stayed healthy; rebuilt API and guarded Caddy started; `/api/health` reported `ok`, `/` returned **200**, and API logs show migrations followed by one Uvicorn worker |
+| 12 | Earlier local stack | existing PostgreSQL stayed healthy; rebuilt API and Caddy started; `/api/health` reported `ok`, `/` returned **200**, and API logs show migrations followed by one Uvicorn worker. A leftover `frontend/out` directory masked the fresh-clone mount defect later found on Google Cloud. |
 | 13 | Secret boundary | no Gemini secret name/value in frontend, public API route code or Caddy config; no Gemini secret material in Docker image history; test provider errors persist only a generic fallback reason |
 
 The real account-reset command was deliberately **not** run. It prints five generated
@@ -38,10 +69,10 @@ passwords and must be executed by the operator in a private SSH terminal after t
 stack is healthy. The automated fresh-test-database check used explicit test-only
 passwords and verified that only hashes were stored.
 
-Gemini uses the official SDK and its bounded contract is tested, but **live LLM mode is
-not validated**: no authorized key/model was configured locally and no provider request
-was made. The exact tested model therefore remains pending server-side availability
-discovery and one successful authorized investigation.
+Gemini uses the official SDK and its bounded contract is tested. The deployment confirmed
+the authorized key and `gemini-3.5-flash` through basic generation and the first function
+turn, but **live structured LLM mode is not yet validated** because both final-output paths
+failed before this correction and have not yet been retried.
 
 ### The deployment artifact
 
@@ -103,16 +134,18 @@ now says so.
 
 ### Not verified — Phase 9 remains incomplete
 
-- **No hosted deployment.** No host, no public URL, no spending authorization requested or
-  given. HTTPS, `COOKIE_SECURE=true` and Caddy's automatic certificates are unexercised.
+- **Corrected hosted path not re-verified.** A Google Cloud deployment exists and exposed
+  these defects, but its public URL, HTTPS/secure-cookie result and the corrected Caddy
+  mount have not yet been recorded after redeployment.
 - **No five-laptop physical rehearsal.** Five concurrent *clients* were soaked for five
   minutes from one machine; that is not five people on five laptops on a venue network,
   and it is not the 10–15 minute rehearsal section 13.2 asks for. **Pending.**
-- **No browser-based rehearsal of D01–D06 end to end against the Compose stack.** The
-  scenarios were verified against a dev server in Phase 8; `docs/demo.md` records those
+- **No post-fix browser rehearsal of D01–D06 end to end against the hosted Compose stack.**
+  The scenarios were verified against a dev server in Phase 8; `docs/demo.md` records those
   numbers and names them as such.
-- **No real LLM call.** Native Gemini support is implemented and contract-tested, but the
-  key/model have not been configured privately and no exact model is claimed as tested.
+- **No successful structured LLM result yet.** The real key and `gemini-3.5-flash` passed
+  basic generation and function selection, but the pre-fix structured turn returned 400;
+  the corrected incident and history paths still need one real retry each.
 
 ---
 

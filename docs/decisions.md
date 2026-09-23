@@ -7,13 +7,32 @@ Newest first within each phase.
 
 ## Phase 9 — deployment stack, verified locally
 
+### Gemini response schemas are converted only at the provider boundary
+
+The real Gemini deployment proved that `gemini-3.5-flash`, the authorized key and the
+manual function-calling turn work, but both structured-output paths returned HTTP 400.
+Pydantic correctly emits `additionalProperties: false` for the application's strict
+models; Gemini rejects that keyword in `response_json_schema`, including when nested under
+`$defs`.
+
+The Gemini adapter now recursively removes only the `additionalProperties` keys from a
+copied provider schema. The Pydantic models remain `extra="forbid"`, and the returned JSON
+still passes the original model, evidence-citation and supported-action validation. The
+OpenAI schema path is unchanged. This keeps provider compatibility separate from the
+application's trust boundary.
+
 ### Fresh servers build the static export in place
 
-`frontend/out` remains ignored. A fresh deployment installs the verified Node 24.x line,
-runs `npm ci` and `npm run build`, and checks `frontend/out/index.html` before Compose is
+`frontend/.next-export` remains ignored. A fresh deployment installs the verified Node 24.x line,
+runs `npm ci` and `npm run build`, and checks `frontend/.next-export/index.html` before Compose is
 started. This matches the current bind-mounted Caddy architecture without committing a
 large generated tree or adding an artifact-transfer channel. Caddy now also fails its
 container start immediately if the file is absent instead of serving an empty site.
+
+The first Phase 9 readiness pass documented and mounted `frontend/out`, even though
+`next.config.ts` has used `.next-export` as the export `distDir` since Phase 2. A leftover
+local `out` directory masked the error; a fresh Google Cloud clone exposed it. Compose and
+all current deployment commands now use the actual directory directly, with no symlink.
 
 ### Provisioning is part of the API image, not a host-Python procedure
 
