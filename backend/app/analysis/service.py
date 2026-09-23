@@ -60,6 +60,7 @@ class AnalysisService:
         self.max_active_jobs = 0
 
     async def startup(self) -> None:
+        await asyncio.to_thread(self._defer_orphaned_jobs)
         self._worker = asyncio.create_task(self._run(), name="phase7-analysis-worker")
 
     async def shutdown(self) -> None:
@@ -69,6 +70,18 @@ class AnalysisService:
                 await self._worker
             except asyncio.CancelledError:
                 pass
+
+    @staticmethod
+    def _defer_orphaned_jobs() -> None:
+        """A process restart cannot resume in-memory provider calls; label them honestly."""
+        with session_scope() as db:
+            rows = db.execute(
+                select(AnalysisRow).where(AnalysisRow.status.in_(("QUEUED", "RUNNING")))
+            ).scalars()
+            for row in rows:
+                row.status = "DEFERRED"
+                previous = row.result if isinstance(row.result, dict) else {}
+                row.result = {**previous, "fallback_reason": "PROCESS_RESTART"}
 
     def enqueue_incident(self, incident_id: UUID, trigger: str, *, manual: bool = False) -> dict:
         if trigger not in self.INCIDENT_TRIGGERS:
