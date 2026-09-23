@@ -224,6 +224,11 @@ class NoiseSigma(BaseModel):
     soc_percent: float = Field(ge=0)
     pressure_bar: float = Field(ge=0)
     mass_kg: float = Field(ge=0)
+    angle_deg: float = Field(ge=0)
+    rate_dps: float = Field(ge=0)
+    wheel_rpm: float = Field(ge=0)
+    cell_spread_v: float = Field(ge=0)
+    snr_db: float = Field(ge=0)
 
 
 class ObservationConfig(BaseModel):
@@ -237,6 +242,48 @@ class EnvironmentConfig(BaseModel):
 
     sunlight_minutes: float = Field(gt=0)
     eclipse_minutes: float = Field(ge=0)
+
+
+class FlightProfilesConfig(BaseModel):
+    """Fixtures for the deterministic flight-systems and link profiles (section 7.5).
+
+    Every channel driven from here carries PROFILE prediction coverage: these values
+    produce reproducible readings, not a validated attitude-control model.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    rate_amplitude_dps: float = Field(gt=0)
+    rate_period_s: float = Field(gt=0)
+    pointing_bias_deg: float = Field(ge=0)
+    pointing_amplitude_deg: float = Field(ge=0)
+    pointing_period_s: float = Field(gt=0)
+    maneuver_scale: float = Field(ge=1.0)
+
+    wheel_bias_rpm: float
+    wheel_amplitude_rpm: float = Field(ge=0)
+    wheel_period_s: float = Field(gt=0)
+    wheel_idle_current_a: float = Field(ge=0)
+    wheel_current_per_rpm_s: float = Field(ge=0)
+
+    cell_spread_base_v: float = Field(ge=0)
+    cell_spread_amplitude_v: float = Field(ge=0)
+    cell_spread_period_s: float = Field(gt=0)
+
+    contact_minutes_per_cycle: float = Field(ge=0)
+    link_snr_nominal_db: float
+    link_snr_amplitude_db: float = Field(ge=0)
+    link_snr_floor_db: float
+    link_period_s: float = Field(gt=0)
+    packets_per_second: float = Field(ge=0)
+    packet_failure_at_floor: float = Field(ge=0, le=1)
+    packet_window_seconds: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _link_consistent(self) -> FlightProfilesConfig:
+        if self.link_snr_floor_db >= self.link_snr_nominal_db:
+            raise ValueError("link_snr_floor_db must sit below link_snr_nominal_db")
+        return self
 
 
 class SimulationConfig(BaseModel):
@@ -259,7 +306,13 @@ class SpacecraftConfig(BaseModel):
     propellant: PropellantConfig
     observation: ObservationConfig
     environment: EnvironmentConfig
+    flight_profiles: FlightProfilesConfig
     simulation: SimulationConfig
+
+    @property
+    def environment_cycle_s(self) -> float:
+        """One configured sunlight + eclipse cycle. Not an orbital period."""
+        return (self.environment.sunlight_minutes + self.environment.eclipse_minutes) * 60.0
 
 
 class RuleDefinition(BaseModel):

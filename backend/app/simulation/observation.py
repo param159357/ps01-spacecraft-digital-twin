@@ -5,8 +5,9 @@ dashboards, rules, forecasts, the AI investigator — reads only what this modul
 plus the known commands in the frame context. It never receives `generation_factor`,
 `extra_load_w`, `heater_stuck_on` or the exact node states.
 
-Channels that Phase 2 does not model are reported as `null` with quality `MISSING` and a
-reason. They are not filled with plausible numbers, and they are not zero.
+A channel that cannot be measured right now — the high-rate link outside a scheduled
+pass — is reported as `null` with quality `MISSING` and a reason. It is never filled
+with a plausible number, and never with zero.
 """
 
 from __future__ import annotations
@@ -24,19 +25,10 @@ from .models import mass_from_pressure
 from .truth import SimulatorTruth
 from .twin import StepResult
 
-# Channels with no model behind them yet. Phase 4 adds the flight-systems profiles.
-UNMODELLED: dict[str, str] = {
-    "cell_voltage_spread": "Cell imbalance profile is not modelled yet.",
-    "pointing_error": "Flight-systems profiles arrive in Phase 4.",
-    "roll_rate": "Flight-systems profiles arrive in Phase 4.",
-    "pitch_rate": "Flight-systems profiles arrive in Phase 4.",
-    "yaw_rate": "Flight-systems profiles arrive in Phase 4.",
-    "wheel_speed": "Flight-systems profiles arrive in Phase 4.",
-    "wheel_current": "Flight-systems profiles arrive in Phase 4.",
-    "link_snr": "Contact-window model arrives in Phase 4.",
-    "packet_error_rate": "Packet accounting arrives in Phase 4.",
-    "computer_reset_count": "Reset events arrive in Phase 4.",
-}
+# Every channel in the dictionary now has a model or a declared profile behind it.
+# Channels that are legitimately unmeasurable at a given moment (the high-rate link
+# outside a scheduled pass) report MISSING with a reason at the point of emission,
+# rather than being listed as permanently unimplemented.
 
 
 class SensorNoise:
@@ -185,12 +177,54 @@ def observe(
         source_time_utc=received_at_utc,
     )
 
-    # --- not modelled yet ------------------------------------------------------
-    for channel_id, reason in UNMODELLED.items():
-        values[channel_id] = None
-        quality[channel_id] = ChannelQuality(
-            state=QualityState.MISSING, reason=reason, source_time_utc=received_at_utc
+    # --- flight systems: deterministic profiles, not a dynamics model ----------
+    flight = result.flight
+    emit("pointing_error", flight.pointing_error_deg, sigma.angle_deg, digits=3)
+    emit("roll_rate", flight.roll_rate_dps, sigma.rate_dps, digits=4)
+    emit("pitch_rate", flight.pitch_rate_dps, sigma.rate_dps, digits=4)
+    emit("yaw_rate", flight.yaw_rate_dps, sigma.rate_dps, digits=4)
+    emit("wheel_speed", flight.wheel_speed_rpm, sigma.wheel_rpm, digits=1)
+    emit("wheel_current", flight.wheel_current_a, sigma.current_a, digits=3)
+    emit("cell_voltage_spread", flight.cell_voltage_spread_v, sigma.cell_spread_v, digits=4)
+
+    # Cumulative within this run. Zero is a true count, not a missing value; the
+    # timestamped events live in engineering detail beside it.
+    values["computer_reset_count"] = result.reset_count
+    quality["computer_reset_count"] = ChannelQuality(
+        state=QualityState.VALID,
+        reason="Cumulative within this run; a new run restarts the counter.",
+        source_time_utc=received_at_utc,
+        last_valid_value=result.reset_count,
+        last_valid_time_utc=received_at_utc,
+    )
+
+    # --- communication link ----------------------------------------------------
+    # Outside a scheduled pass there is nothing to measure. Reporting MISSING rather
+    # than a low number is the difference between "no measurement" and "a bad link",
+    # and it is why an expected contact gap must not read as a radio failure.
+    if result.link_snr_db is None:
+        values["link_snr"] = None
+        quality["link_snr"] = ChannelQuality(
+            state=QualityState.MISSING,
+            reason="No scheduled contact window; the high-rate link is not measured.",
+            source_time_utc=received_at_utc,
         )
+    else:
+        emit("link_snr", result.link_snr_db, sigma.snr_db, digits=2)
+
+    # Rolling ratio with an explicit denominator; unavailable when nothing was attempted.
+    if result.packet_error_rate_percent is None:
+        values["packet_error_rate"] = None
+        quality["packet_error_rate"] = ChannelQuality(
+            state=QualityState.MISSING,
+            reason=(
+                "No packets attempted in the rolling window, so the error rate has no "
+                "denominator."
+            ),
+            source_time_utc=received_at_utc,
+        )
+    else:
+        emit("packet_error_rate", result.packet_error_rate_percent, 0.0, digits=3)
 
     context = FrameContext(
         vehicle_config_version=config.config_version,
@@ -200,7 +234,7 @@ def observe(
         run_status=run_status,
         mode=OperatingMode(truth.conditions.mode),
         illumination=result.illumination,
-        contact_expected=True,
+        contact_expected=result.contact.expected,
         control_revision=control_revision,
         eclipse_next_change_s=round(result.seconds_to_illumination_change, 1),
         known_commands={
@@ -231,5 +265,12 @@ def observe(
             "payload_served_w": round(result.payload_served_w, 2),
             "shed_loads": ", ".join(electrical.shed) if electrical.shed else None,
             "computer_powered": result.computer_powered,
+            # Stated denominator for packet_error_rate, and the timestamped reset
+            # events that sit beside the cumulative counter (section 7.5).
+            "packets_attempted_window": result.packets_attempted_window,
+            "packets_failed_window": result.packets_failed_window,
+            "packet_window_seconds": config.flight_profiles.packet_window_seconds,
+            "reset_events_s": ", ".join(f"{v:.0f}" for v in result.reset_events_s) or None,
+            "contact_seconds_to_change": round(result.contact.seconds_to_next_change, 1),
         },
     )

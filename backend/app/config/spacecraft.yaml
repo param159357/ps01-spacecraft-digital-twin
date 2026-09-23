@@ -4,8 +4,8 @@
 # assumption chosen to make the demonstration reproducible and independently
 # testable. None of it is sourced from NASA, ISRO or any real spacecraft.
 
-config_version: "spacecraft-0.3.0"
-model_version: "twin-0.3.0"
+config_version: "spacecraft-0.4.0"
+model_version: "twin-0.4.0"
 vehicle_name: "PS01 Demonstration Vehicle"
 
 power:
@@ -45,6 +45,11 @@ observation:
     soc_percent: 0.10
     pressure_bar: 0.01
     mass_kg: 0.0002
+    angle_deg: 0.02
+    rate_dps: 0.004
+    wheel_rpm: 3.0
+    cell_spread_v: 0.0004
+    snr_db: 0.25
 
 thermal:
   # Effective linear boundary: a toy heat-rejection model over a limited range.
@@ -104,7 +109,44 @@ environment:
   # A configured demonstration schedule. NOT an orbital calculation.
   sunlight_minutes: 60
   eclipse_minutes: 30
-  contact_windows_note: "Expected-contact schedule is defined per run in Phase 2."
+
+flight_profiles:
+  # SIMPLIFIED SEEDED PROFILES, not a validated attitude-control model. Every channel
+  # driven from here is marked PROFILE coverage in telemetry.yaml, so nothing implies
+  # these are physically forecastable. All values are fixtures for a fictional vehicle.
+
+  # --- attitude and rates ---
+  rate_amplitude_dps: 0.22          # nominal body-rate envelope
+  rate_period_s: 420.0
+  pointing_bias_deg: 0.35           # residual pointing offset
+  pointing_amplitude_deg: 0.9
+  pointing_period_s: 540.0
+  maneuver_scale: 3.0               # MANEUVER mode widens rates/pointing by design
+
+  # --- selected reaction wheel (one wheel, not a full assembly) ---
+  wheel_bias_rpm: 1850.0
+  wheel_amplitude_rpm: 900.0
+  wheel_period_s: 900.0
+  wheel_idle_current_a: 0.16
+  wheel_current_per_rpm_s: 0.05     # current follows wheel acceleration, for consistency
+
+  # --- cell imbalance (rule-only; no physical cell model) ---
+  cell_spread_base_v: 0.006
+  cell_spread_amplitude_v: 0.012
+  cell_spread_period_s: 1500.0
+
+  # --- communication link ---
+  # The contact window governs the high-rate downlink channels only; basic telemetry
+  # keeps flowing between passes. A real loss of signal is the simulator's separate
+  # contact_loss injection. See docs/decisions.md.
+  contact_minutes_per_cycle: 25     # from the start of each sunlight/eclipse cycle
+  link_snr_nominal_db: 14.0
+  link_snr_amplitude_db: 3.0
+  link_snr_floor_db: 6.0
+  link_period_s: 300.0
+  packets_per_second: 120.0
+  packet_failure_at_floor: 0.08     # toy failure fraction at the SNR floor
+  packet_window_seconds: 60         # rolling window for packet_error_rate
 
 simulation:
   tick_seconds: 1.0

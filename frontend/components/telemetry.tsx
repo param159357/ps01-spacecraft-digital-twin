@@ -32,14 +32,30 @@ export function useChannelMeta() {
   return { meta, freshness };
 }
 
+/**
+ * Colour a value against its configured operating limits.
+ *
+ * The "approaching a limit" margin is a fraction of the operating *band width*, not of
+ * the limit's magnitude. That distinction matters: a battery whose normal band is
+ * 24–29 V would otherwise read amber above 27.55 V — which is most of the time it is
+ * charged — and a console that cries warning during normal operation teaches operators
+ * to ignore it.
+ */
 function limitTone(info: ChannelInfo | undefined, value: number): StatusTone {
   if (!info) return "accent";
   const { operating_min: lo, operating_max: hi } = info;
   if (lo !== null && value < lo) return "critical";
   if (hi !== null && value > hi) return "critical";
-  // Within 5% of a configured limit reads as a warning.
-  if (hi !== null && value > hi - Math.abs(hi) * 0.05) return "warning";
-  if (lo !== null && value < lo + Math.abs(lo) * 0.05) return "warning";
+
+  const margin =
+    lo !== null && hi !== null
+      ? (hi - lo) * 0.05
+      : 0.05 * Math.abs(hi ?? lo ?? 0);
+
+  if (margin > 0) {
+    if (hi !== null && value > hi - margin) return "warning";
+    if (lo !== null && value < lo + margin) return "warning";
+  }
   return "nominal";
 }
 
@@ -75,7 +91,9 @@ export function ChannelReadout({
     display = raw ? "OPEN" : "CLOSED";
     tone = raw ? "warning" : "nominal";
   } else {
-    display = (raw as number).toFixed(digits);
+    // A count is a whole number of events, not a continuous gauge (section 6.2), so it
+    // never renders with a fractional part regardless of the caller's preference.
+    display = (raw as number).toFixed(info?.type === "count" ? 0 : digits);
     tone = limitTone(info, raw as number);
   }
 
@@ -138,7 +156,11 @@ export function ChannelTableRow({
       <td className="tnum py-1 pr-3 text-right">
         {usable ? (
           <span className={typeof raw === "boolean" ? "text-ink" : ""}>
-            {typeof raw === "boolean" ? (raw ? "OPEN" : "CLOSED") : (raw as number).toFixed(digits)}
+            {typeof raw === "boolean"
+              ? raw
+                ? "OPEN"
+                : "CLOSED"
+              : (raw as number).toFixed(info?.type === "count" ? 0 : digits)}
           </span>
         ) : (
           <span className="text-unavailable">{"—"}</span>

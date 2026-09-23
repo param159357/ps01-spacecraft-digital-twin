@@ -33,6 +33,11 @@ class InjectedConditions(BaseModel):
     heater_stuck_on: bool = False
     contact_loss: bool = False
 
+    # Total computer resets that should have occurred in this run. Raising it makes the
+    # vehicle record one timestamped reset event per increment; it never decreases within
+    # a run. Hidden, because an operator learns about a reset only from telemetry.
+    computer_resets: int = Field(default=0, ge=0, le=20)
+
     # --- known commands, visible to operators as context ---
     payload_duty_percent: float = Field(default=100.0, ge=0.0, le=100.0)
     heater_auto: bool = True
@@ -45,6 +50,7 @@ class InjectedConditions(BaseModel):
             "extra_load_w": self.extra_load_w,
             "heater_stuck_on": self.heater_stuck_on,
             "contact_loss": self.contact_loss,
+            "computer_resets": self.computer_resets,
         }
 
     @property
@@ -65,6 +71,7 @@ class ConditionUpdate(BaseModel):
     extra_load_w: float | None = Field(default=None, ge=0.0, le=300.0)
     heater_stuck_on: bool | None = None
     contact_loss: bool | None = None
+    computer_resets: int | None = Field(default=None, ge=0, le=20)
     payload_duty_percent: float | None = Field(default=None, ge=0.0, le=100.0)
     heater_auto: bool | None = None
     mode: OperatingMode | None = None
@@ -86,6 +93,13 @@ class SimulatorTruth:
     conditions: InjectedConditions = field(default_factory=InjectedConditions)
     tick_seq: int = 0
     sim_time_s: float = 0.0
+    # Rolling (sim_time_s, attempted, failed) packet samples for the configured
+    # window. A real counter, so the reported error rate has a stated denominator.
+    packet_window: list[tuple[float, int, int]] = field(default_factory=list)
+    # Cumulative resets within this run, plus the simulated time of each one.
+    # A new run restarts the counter without implying a physical reset (section 7.5).
+    resets_applied: int = 0
+    reset_events_s: list[float] = field(default_factory=list)
 
     @classmethod
     def initial(
@@ -103,7 +117,12 @@ class SimulatorTruth:
 
     def copy(self) -> SimulatorTruth:
         """Immutable snapshot for off-loop work such as forecasting."""
-        return replace(self, temperatures_c=dict(self.temperatures_c))
+        return replace(
+            self,
+            temperatures_c=dict(self.temperatures_c),
+            packet_window=list(self.packet_window),
+            reset_events_s=list(self.reset_events_s),
+        )
 
     # --- persistence ----------------------------------------------------------
 
@@ -118,6 +137,9 @@ class SimulatorTruth:
             "conditions": self.conditions.model_dump(mode="json"),
             "tick_seq": self.tick_seq,
             "sim_time_s": self.sim_time_s,
+            "packet_window": [list(sample) for sample in self.packet_window],
+            "resets_applied": self.resets_applied,
+            "reset_events_s": list(self.reset_events_s),
         }
 
     @classmethod
@@ -134,6 +156,11 @@ class SimulatorTruth:
             conditions=InjectedConditions.model_validate(data.get("conditions") or {}),
             tick_seq=int(data.get("tick_seq", 0)),
             sim_time_s=float(data.get("sim_time_s", 0.0)),
+            packet_window=[
+                (float(s[0]), int(s[1]), int(s[2])) for s in (data.get("packet_window") or [])
+            ],
+            resets_applied=int(data.get("resets_applied", 0)),
+            reset_events_s=[float(v) for v in (data.get("reset_events_s") or [])],
         )
 
     # --- presenter view -------------------------------------------------------
@@ -148,6 +175,8 @@ class SimulatorTruth:
             "gas_mass_kg": round(self.gas_mass_kg, 6),
             "heater_on": self.heater_on,
             "valve_open": self.valve_open,
+            "resets_applied": self.resets_applied,
+            "reset_events_s": list(self.reset_events_s),
             "hidden_conditions": self.conditions.hidden_fields,
             "known_commands": self.conditions.known_commands,
         }

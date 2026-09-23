@@ -5,6 +5,7 @@ import { LiveChart } from "@/components/LiveChart";
 import { Panel, PendingPanel, StatusBadge } from "@/components/primitives";
 import { ChannelReadout, ChannelTableRow, useChannelMeta } from "@/components/telemetry";
 import { Phase3Operations } from "@/components/Phase3Operations";
+import { SubsystemDiagram } from "@/components/SubsystemDiagram";
 import { useRequireRole } from "@/lib/auth";
 import { freshnessTone, useLiveStream } from "@/lib/live";
 
@@ -141,6 +142,24 @@ export default function MasterConsole() {
 
         <div className="grid gap-4 xl:grid-cols-3">
           <Panel
+            title="Subsystem overview"
+            subtitle="Schematic, one key value per subsystem"
+            className="xl:col-span-2"
+          >
+            <SubsystemDiagram frame={frame} meta={meta} />
+          </Panel>
+
+          <Panel title="Power boundary" subtitle="Derived engineering detail">
+            {frame ? (
+              <EngineeringDetail engineering={frame.engineering} />
+            ) : (
+              <p className="text-xs text-ink-faint">No frame received yet.</p>
+            )}
+          </Panel>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-3">
+          <Panel
             title="Energy and demand"
             subtitle="State of charge against requested load"
             className="xl:col-span-2"
@@ -156,12 +175,31 @@ export default function MasterConsole() {
             />
           </Panel>
 
-          <Panel title="Power boundary" subtitle="Derived engineering detail">
-            {frame ? (
-              <EngineeringDetail engineering={frame.engineering} />
-            ) : (
-              <p className="text-xs text-ink-faint">No frame received yet.</p>
-            )}
+          <Panel title="Link and attitude" subtitle="Flight-systems summary — PROFILE coverage">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <ChannelReadout channelId="link_snr" frame={frame} meta={meta} digits={1} compact />
+              <ChannelReadout
+                channelId="packet_error_rate"
+                frame={frame}
+                meta={meta}
+                digits={2}
+                compact
+              />
+              <ChannelReadout
+                channelId="pointing_error"
+                frame={frame}
+                meta={meta}
+                digits={2}
+                compact
+              />
+              <ChannelReadout channelId="wheel_speed" frame={frame} meta={meta} digits={0} compact />
+            </div>
+            <p className="mt-2 text-[10px] text-ink-faint">
+              {frame?.context.contact_expected === false
+                ? "No scheduled contact window, so the high-rate link is not measured. That is an expected gap, not a radio failure."
+                : "Measured during a scheduled contact pass."}{" "}
+              These channels use deterministic profiles and are not forecastable.
+            </p>
           </Panel>
         </div>
 

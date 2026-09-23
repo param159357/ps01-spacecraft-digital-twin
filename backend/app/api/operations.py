@@ -41,12 +41,25 @@ def _service(runner: SimulationRunner):
     return runner.operations
 
 
-@router.get("/incidents", dependencies=[Depends(require_operational)])
-def list_incidents(runner: SimulationRunner = Depends(get_runner)) -> dict[str, Any]:
+@router.get("/incidents")
+def list_incidents(
+    role: Role = Depends(current_role),
+    runner: SimulationRunner = Depends(get_runner),
+) -> dict[str, Any]:
+    """Incidents within this role's assigned scope (section 3).
+
+    The master sees every subsystem; a specialist sees its own. The incident ID is the
+    same record on both screens, which is what lets a master and a specialist discuss
+    one incident. `hidden_from_this_role` reports how many active incidents exist
+    elsewhere — a count only, with no detail — so a specialist is never misled into
+    thinking the vehicle is quiet when another subsystem is in trouble.
+    """
+    incidents = _service(runner).list_incidents(runner.run_id)
+    visible = [i for i in incidents if may_act_on(role, i.subsystem)]
     return {
-        "incidents": [
-            i.model_dump(mode="json") for i in _service(runner).list_incidents(runner.run_id)
-        ]
+        "incidents": [i.model_dump(mode="json") for i in visible],
+        "role": role.value,
+        "hidden_from_this_role": len(incidents) - len(visible),
     }
 
 

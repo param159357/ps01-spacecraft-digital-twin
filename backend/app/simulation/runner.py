@@ -247,7 +247,7 @@ class SimulationRunner:
                     self.truth.conditions
                 )
                 self.control_revision += 1
-            self.truth, result = twin.step(self.config.spacecraft, self.truth, tick_s)
+            self.truth, result = twin.step(self.config.spacecraft, self.truth, tick_s, self.seed)
 
             # A simulated contact loss advances the vehicle but delivers nothing to the
             # ground. Clients keep their last values and watch them go stale — which is

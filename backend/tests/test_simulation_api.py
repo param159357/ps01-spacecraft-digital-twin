@@ -235,9 +235,12 @@ def test_history_rejects_a_channel_outside_the_role_scope(client, clean_runs):
     assert set(allowed.json()["frames"][0]["values"]) == {"wheel_speed", "bus_voltage"}
 
 
-def test_unmodelled_channels_are_missing_not_zero(client, clean_runs):
-    """A channel with no model behind it reports null with a reason, never a
-    plausible-looking value and never zero."""
+def test_every_channel_now_has_a_model_or_a_declared_profile(client, clean_runs):
+    """Phase 4 gave the flight-systems channels deterministic profiles.
+
+    They were `MISSING` through Phases 2 and 3 and are now real readings. What must not
+    happen is a channel quietly becoming zero instead of being reported honestly.
+    """
     _start_run(client)
     _wait_for_frames(client)
     logout(client)
@@ -245,9 +248,13 @@ def test_unmodelled_channels_are_missing_not_zero(client, clean_runs):
     login(client, "flight")
     frame = client.get("/api/runs/current").json()["frame"]
 
-    assert frame["values"]["wheel_speed"] is None
-    assert frame["quality"]["wheel_speed"]["state"] == "MISSING"
-    assert frame["quality"]["wheel_speed"]["reason"]
+    for channel_id in ("wheel_speed", "wheel_current", "pointing_error", "roll_rate"):
+        assert frame["quality"][channel_id]["state"] == "VALID", channel_id
+        assert isinstance(frame["values"][channel_id], (int, float)), channel_id
+
+    # A count of zero resets is a true observation, not a missing value.
+    assert frame["values"]["computer_reset_count"] == 0
+    assert frame["quality"]["computer_reset_count"]["state"] == "VALID"
 
 
 # ------------------------------------------------------------------- history query

@@ -5,6 +5,81 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 4 — five mission-control dashboards
+
+**Date:** 2026-09-23
+**Environment:** Windows 11 Pro, Python 3.14.3, Node 24.19.0, PostgreSQL 17 (Docker).
+
+### Executed checks
+
+| # | Check | Command / method | Result |
+|---|---|---|---|
+| 1 | Full backend suite | `pytest -q` | **91 passed**, 0 failed, 61 s |
+| 2 | Phase 4 focused suite | `pytest tests/test_phase4.py -q` | **12 passed** |
+| 3 | Lint | `ruff check app tests ../scripts` | **All checks passed** |
+| 4 | Frontend types | `npx tsc --noEmit` | **exit 0** |
+| 5 | Static export | `npm run build` | **exit 0**, 9 routes |
+| 6 | Schema drift | `alembic check` | **No new upgrade operations detected** |
+| 7 | Profiles are deterministic | `test_profiles_are_deterministic_for_a_given_seed` | same seed reproduces identical values; a different seed does not |
+| 8 | Profiles stay inside their own limits | `test_profile_values_stay_inside_their_configured_operating_limits` | swept a full 5400 s cycle at 37 s steps across 7 channels; all inside configured operating bounds |
+| 9 | Manoeuvre widens rates by design | `test_maneuver_mode_widens_rates_by_design` | MANEUVER rates exceed NOMINAL; a known command, not a fault |
+| 10 | Link unavailable outside a pass | `test_link_is_unavailable_outside_a_scheduled_pass` | contact at t=600 s, none at t=3000 s; SNR is `None` outside |
+| 11 | Packet rate has a real denominator | `test_packet_error_rate_is_unavailable_with_a_zero_denominator` | 0 attempted → `None`, never 0 %; 6/120 → 5.0 % |
+| 12 | Packet window is bounded | `test_packet_window_is_bounded_by_the_configured_window` | window never exceeds the configured 60 samples |
+| 13 | Reset events are distinct and timestamped | `test_reset_counter_records_timestamped_events` | 2 resets produce 2 distinct event times |
+| 14 | A new run restarts the counter | `test_a_new_run_restarts_the_counter_without_a_physical_reset` | fresh truth has 0 resets and no events |
+| 15 | Specialists see only their own incidents | `test_specialists_only_see_incidents_in_their_own_subsystem` | each list contains only its own subsystem; `hidden_from_this_role` accounts for the rest |
+| 16 | Role/subsystem matrix | `test_role_subsystem_matrix_matches_the_specification` | POWER cannot act on FLIGHT_SYSTEMS; MASTER can act on all |
+| 17 | All five routes, own channel scope | `test_every_console_route_serves_its_own_channel_scope` | five accounts resolve; master 28 channels, each specialist strictly fewer |
+| 18 | Live run: all 28 channels valid | live API, run `eb6f0ca7` | **0 non-VALID channels** inside a contact window |
+| 19 | Browser: flight console | Chromium 1366×768 | attitude, three-axis rate chart, wheel speed/current dual axis, link panel, channel table — all populated |
+| 20 | Browser: link outside a pass | reset to `sim_time_s=2400`, flight console | badge **NO CONTACT SCHEDULED**; SNR and packet rate both `—` with reasons; app stayed **CONNECTED** and run **RUNNING** |
+| 21 | Browser: master diagram | Chromium 1366×768 and 1920×1080 | 2D schematic with power-flow lines, one value per block in its own unit, status as dot + text |
+| 22 | Browser: power console | Chromium 1366×768 | boundary balanced 300 W = 180 served + 120 charging; curtailment note present |
+| 23 | Browser: thermal console | Chromium 1366×768 | six node temperatures, commanded-versus-observed heater, cold-gas store with derived-mass caveat |
+| 24 | Layout review at both target sizes | 1366×768 and 1920×1080 | no clipping or horizontal scroll; two defects found and fixed (below) |
+
+### Acceptance criteria for Phase 4
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| All five routes work | **Pass** | checks 17, 19–23 |
+| Multiple screens show the same incident ID | **Pass** | incident IDs come from one backend record; the master sees every subsystem and each specialist sees its own (checks 15, 16). Not yet exercised with a live incident open on two screens at once — see limitations |
+| Camera-specific features have not been invented | **Pass** | the optional load is a generic payload; no camera-specific channel or control exists |
+| No unrelated random telemetry | **Pass** | check 8 — every profile channel is a declared, deterministic, bounded function marked `PROFILE`, not a random filler |
+| Five browser sessions remain usable together | **Partial** | each of the five consoles was driven in a browser against the same live run, one at a time. Five *concurrent* browser sessions are a Phase 9 rehearsal item |
+
+### Defects found and fixed during this phase
+
+1. **`computer_reset_count` rendered as "0.00".** Section 6.2 states count channels are
+   not continuous floating-point gauges. `ChannelReadout` and `ChannelTableRow` now force
+   zero decimals from the channel's declared type rather than the caller's preference.
+   Found by reading the live flight console.
+2. **Battery terminal voltage read amber during normal operation.** The "approaching a
+   limit" margin used 5% of the limit's magnitude, so a 24–29 V band warned above
+   27.55 V — most of the time the battery is charged. Now 5% of the band width. Fixed in
+   both the readout and the subsystem diagram.
+3. **The subsystem diagram filled half a 1920-wide screen.** A fixed aspect ratio at full
+   width is not "compact"; the SVG is now capped and centred.
+
+### Known limitations after Phase 4
+
+- **Four detection rules remain unimplemented** — `ACTUATOR_MISMATCH` (Phase 5),
+  `PRESSURE_INCONSISTENCY`, `FLIGHT_PROFILE_DEVIATION` and `RESET_RECURRENCE`. The new
+  flight and propulsion channels are therefore displayed and rule-referenced but not yet
+  monitored. `/api/config/coverage` reports this honestly.
+- **Forecast coverage is unchanged and still `PARTIAL`** — battery reserve and the
+  battery thermal node only. The flight-systems profiles are explicitly not forecastable.
+- **The thermal console flags a heater command/observation discrepancy in the UI but
+  does not open an incident.** That rule is Phase 5; the panel says so.
+- **Two screens have not yet been observed holding the same live incident
+  simultaneously.** The scoping is unit-tested and the ID is a single backend record, but
+  the concurrent visual check belongs with the Phase 9 five-client rehearsal.
+- **Deployment remains unverified** beyond the database container — unchanged since
+  Phase 1.
+
+---
+
 ## Phase 3 — first complete demonstration
 
 **Date:** 2026-09-23

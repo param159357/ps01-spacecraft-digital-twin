@@ -899,7 +899,7 @@ This delivered specification does not inspect or assert implementation status in
 | 1 | COMPLETE | `docs/validation.md` Phase 1: 29 backend tests pass, ruff clean, tsc clean, static export builds, `alembic check` clean, live 401/403 verified by curl and in a browser | Phase 1 done |
 | 2 | COMPLETE | `docs/validation.md` Phase 2: 74 backend tests pass; 52.6316 Wh energy reference and analytic thermal response verified; two live SSE clients observed identical frames 27–33; reset, pause, truth isolation and contact-loss staleness checked in a browser | Phase 2 done |
 | 3 | COMPLETE | `docs/validation.md` Phase 3: 79 backend tests pass; D01 eclipse opens no false incident; D02 projects 19.7% vs 23.9%, applies once, and measured load falls 380.3 → 299.6 W with `IMPROVED` outcome | Phase 3 done |
-| 4 | NOT_STARTED | None recorded here | Five usable dashboards |
+| 4 | COMPLETE | `docs/validation.md` Phase 4: 91 backend tests pass; all 28 channels carry a model or a declared profile; link reports unavailable outside a scheduled pass; specialist incident lists are role-scoped; five consoles reviewed at 1366x768 and 1920x1080 | Phase 4 done |
 | 5 | NOT_STARTED | None recorded here | Major and delayed-response cases |
 | 6 | NOT_STARTED | None recorded here | Historical recurrence |
 | 7 | NOT_STARTED | None recorded here | Live AI and period reviews |
@@ -919,6 +919,55 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-23 — Phase 4
+
+- Status: COMPLETE.
+- Implemented/files changed:
+  - `backend/app/simulation/profiles.py` — deterministic flight-systems and link
+    profiles: pointing error, three body rates, the selected wheel (current follows
+    acceleration for consistency), cell imbalance, scheduled contact windows, link SNR
+    and packet accounting. Pure functions of simulated time plus a seed-derived phase, so
+    a scenario replays identically.
+  - `simulation/twin.py`, `truth.py`, `observation.py` — the ten previously `MISSING`
+    channels now carry real readings. Packet counts and the reset counter are genuine
+    state in `SimulatorTruth` and survive a checkpoint. `link_snr` and
+    `packet_error_rate` report `MISSING` with a reason outside a pass rather than a
+    plausible number.
+  - `config/spacecraft.yaml`, `config/loader.py` — a validated `flight_profiles` block
+    and five new noise sigmas; `spacecraft-0.4.0`, model `twin-0.4.0`.
+  - `api/operations.py` — `GET /incidents` is role-scoped via `may_act_on`, and reports
+    `hidden_from_this_role` as a count so an empty list is never mistaken for a quiet
+    vehicle.
+  - Frontend: `components/SubsystemDiagram.tsx` (compact 2D schematic with power flow),
+    `components/IncidentPanel.tsx` (specialist acknowledge/evidence, no approval), and
+    full power, thermal and flight dashboards replacing the Phase 2 readout strips.
+- Checks actually run and results: 91 backend tests pass (61 s); 12 focused Phase 4 tests;
+  ruff clean; `tsc --noEmit` clean; `npm run build` exports 9 routes; `alembic check`
+  clean. A profile sweep across a full 5400 s cycle confirmed all seven profile channels
+  stay inside their configured operating limits. A live run showed 0 non-VALID channels
+  inside a contact window; resetting to `sim_time_s=2400` put the console into **NO
+  CONTACT SCHEDULED** with SNR and packet rate unavailable while the app stayed connected
+  and the run kept running. All five consoles reviewed in a browser at 1366x768 and the
+  master also at 1920x1080. Full table in `docs/validation.md`.
+- Decisions/deviations from this specification: the scheduled contact window governs the
+  high-rate link channels only, while basic telemetry keeps flowing between passes —
+  a documented simplification so the demonstration is not frozen for most of each cycle;
+  real loss of signal remains the separate `contact_loss` injection. Limit-proximity
+  colouring now uses the operating band width rather than the limit's magnitude. The
+  master keeps its own Phase 3 operations panel rather than sharing the specialists'.
+  All recorded in `docs/decisions.md`.
+- Missing credentials or external checks: unchanged — no AI provider, no deployment host.
+- Known limitations: `ACTUATOR_MISMATCH`, `PRESSURE_INCONSISTENCY`,
+  `FLIGHT_PROFILE_DEVIATION` and `RESET_RECURRENCE` remain unimplemented, so the new
+  flight and propulsion channels are displayed but not yet monitored; forecast coverage
+  is still `PARTIAL`; two screens have not yet been observed holding the same live
+  incident at once, which belongs with the Phase 9 rehearsal.
+- Next exact task: Phase 5 — major and delayed-intervention cases. Stuck-on optional
+  branch with commanded-versus-observed distinction, independently modelled branch
+  isolation with baseline/action comparison, a delayed-response case with measured
+  consequence, and a failed-command case so the UI distinguishes acceptance from
+  effective recovery.
 
 ### 2026-09-23 — Phase 3
 

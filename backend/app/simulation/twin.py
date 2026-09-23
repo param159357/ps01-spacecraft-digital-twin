@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from app.config.loader import SpacecraftConfig
 from app.contracts.common import Illumination, OperatingMode
 
-from . import environment, models
+from . import environment, models, profiles
 from .models import ElectricalStep, LoadRequest
+from .profiles import ContactState, FlightProfileState
 from .truth import SimulatorTruth
 
 
@@ -37,6 +38,15 @@ class StepResult:
     seconds_to_illumination_change: float
     boundary_c: float
     computer_powered: bool
+    # Flight-systems and link values. PROFILE coverage, not a dynamics model.
+    flight: FlightProfileState
+    contact: ContactState
+    link_snr_db: float | None
+    packet_error_rate_percent: float | None
+    packets_attempted_window: int
+    packets_failed_window: int
+    reset_count: int
+    reset_events_s: tuple[float, ...]
 
 
 def _heater_thermostat(config: SpacecraftConfig, battery_c: float, currently_on: bool) -> bool:
@@ -51,12 +61,13 @@ def _heater_thermostat(config: SpacecraftConfig, battery_c: float, currently_on:
 
 
 def step(
-    config: SpacecraftConfig, truth: SimulatorTruth, dt_s: float
+    config: SpacecraftConfig, truth: SimulatorTruth, dt_s: float, seed: int = 0
 ) -> tuple[SimulatorTruth, StepResult]:
     """Advance `truth` by `dt_s` simulated seconds and return the new state plus derived
     values. `truth` is not mutated; a new instance is returned."""
     power = config.power
     conditions = truth.conditions
+    next_sim_time_s = truth.sim_time_s + dt_s
 
     env = environment.evaluate(
         config.environment,
@@ -142,6 +153,37 @@ def step(
         config.propellant, truth.gas_mass_kg, truth.valve_open, dt_s
     )
 
+    # --- flight-systems profiles, link and packet accounting (section 7.5) ---
+    flight = profiles.evaluate_flight(
+        config.flight_profiles, next_sim_time_s, seed, conditions.mode, dt_s
+    )
+    contact = profiles.evaluate_contact(
+        config.flight_profiles, next_sim_time_s, config.environment_cycle_s
+    )
+    snr_db = profiles.link_snr_db(config.flight_profiles, next_sim_time_s, seed, contact)
+    attempted, failed = profiles.packet_counts(config.flight_profiles, snr_db, dt_s)
+
+    # Keep only the configured rolling window, so the reported error rate always has a
+    # stated denominator rather than an open-ended one.
+    window_s = float(config.flight_profiles.packet_window_seconds)
+    packet_window = [
+        sample
+        for sample in truth.packet_window
+        if next_sim_time_s - sample[0] < window_s
+    ]
+    if attempted > 0:
+        packet_window.append((next_sim_time_s, attempted, failed))
+    window_attempted = sum(sample[1] for sample in packet_window)
+    window_failed = sum(sample[2] for sample in packet_window)
+
+    # A raised reset count records one timestamped event per increment. The counter is
+    # per run: a new run restarts it without implying a physical reset.
+    resets_applied = truth.resets_applied
+    reset_events_s = list(truth.reset_events_s)
+    if conditions.computer_resets > resets_applied:
+        resets_applied += 1
+        reset_events_s.append(next_sim_time_s)
+
     next_truth = SimulatorTruth(
         energy_wh=electrical.next_energy_wh,
         temperatures_c=next_temps,
@@ -150,7 +192,10 @@ def step(
         valve_open=truth.valve_open,
         conditions=conditions,
         tick_seq=truth.tick_seq + 1,
-        sim_time_s=truth.sim_time_s + dt_s,
+        sim_time_s=next_sim_time_s,
+        packet_window=packet_window,
+        resets_applied=resets_applied,
+        reset_events_s=reset_events_s,
     )
 
     result = StepResult(
@@ -171,5 +216,15 @@ def step(
         seconds_to_illumination_change=env.seconds_to_next_change,
         boundary_c=env.boundary_c,
         computer_powered=computer_powered,
+        flight=flight,
+        contact=contact,
+        link_snr_db=snr_db,
+        packet_error_rate_percent=profiles.packet_error_rate_percent(
+            window_attempted, window_failed
+        ),
+        packets_attempted_window=window_attempted,
+        packets_failed_window=window_failed,
+        reset_count=resets_applied,
+        reset_events_s=tuple(reset_events_s),
     )
     return next_truth, result

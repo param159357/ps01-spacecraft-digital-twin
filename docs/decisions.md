@@ -5,6 +5,69 @@ Newest first within each phase.
 
 ---
 
+## Phase 4 — five mission-control dashboards
+
+### Flight-systems channels are profiles, and say so everywhere
+
+`simulation/profiles.py` produces attitude, wheel, link and reset readings as pure
+functions of simulated time plus a per-run phase offset derived from the seed. No
+rigid-body dynamics, no random generator, so a scenario replays identically. Every one of
+these channels carries `PROFILE` prediction coverage in `telemetry.yaml`, the flight
+console states it in its own header, and the forecast engine does not project them. The
+wheel's current follows its acceleration rather than being an independent number, so
+speed and current cannot disagree arbitrarily — but wheel current alone still does not
+establish a root cause.
+
+### The contact window governs the high-rate link only
+
+`link_snr` and `packet_error_rate` are measured during a scheduled pass and reported
+`MISSING` with a reason outside one. Basic telemetry keeps flowing between passes, as a
+continuous beacon would.
+
+This is a deliberate simplification. A stricter reading of section 7.5 would stop
+delivering telemetry entirely between passes, which is more faithful but would leave
+every dashboard frozen for most of a 90-minute cycle — unusable as a demonstration. The
+behaviour section 12.3 actually needs, a real loss of signal that leaves the app connected
+while readings go stale, is modelled separately by the simulator's `contact_loss`
+injection and was verified in Phase 2. Reporting `None` rather than a low SNR is the
+difference between "no measurement" and "a bad link", and it is what stops an expected
+contact gap from reading as a radio failure.
+
+### A reset count of zero is a real observation
+
+`computer_reset_count` reports `0` with quality `VALID`, not `MISSING`. Zero resets is a
+true count. The simulator can raise `computer_resets` to make the vehicle record one
+timestamped event per increment, and those events sit in engineering detail beside the
+cumulative counter. A new run restarts the counter without implying a physical reset.
+
+### Specialists see only their own subsystem's incidents
+
+`GET /incidents` filters by `may_act_on`, so a power incident never appears on the flight
+console. The response also carries `hidden_from_this_role`: a count, with no detail, of
+active incidents elsewhere. Without it a specialist could read an empty list as "the
+vehicle is quiet" while another subsystem is in trouble. An earlier draft added a
+`scope=all` parameter so specialists could see everything read-only; it was dropped
+because it widens visibility beyond what section 3 grants, and the master console already
+holds the shared picture.
+
+### Limit proximity is measured against the band width, not the limit's magnitude
+
+The "approaching a limit" amber used 5% of the limit's absolute value, so a battery whose
+normal operating band is 24–29 V read amber above 27.55 V — most of the time it is
+charged. It now uses 5% of the band width. A console that cries warning during normal
+operation teaches operators to ignore it, which is worse than no colour at all.
+
+### The master keeps its own operations panel
+
+The three specialist consoles share a new `IncidentPanel` with acknowledge and evidence
+but no approval, because only the master executes recovery. The master keeps the richer
+Phase 3 panel that carries the comparison, approval and observed-outcome workflow. Two
+components rather than one prop-driven component is the deliberate choice: the Phase 3
+flow is verified end to end, and rewriting it to share code would have risked a working
+demonstration for tidiness.
+
+---
+
 ## Phase 3 — first complete demonstration
 
 ### Observed state is a hard module boundary
