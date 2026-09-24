@@ -86,6 +86,17 @@ export function IncidentPanel({ subsystemLabel }: { subsystemLabel: string }) {
     }
   }
 
+  // An alert's "View incident" names a specific incident, which may not be the one the
+  // specialist currently has open.
+  useEffect(() => {
+    function onSelect(event: Event) {
+      const id = (event as CustomEvent<string>).detail;
+      if (typeof id === "string") setSelected(id);
+    }
+    window.addEventListener("ps01:select-incident", onSelect);
+    return () => window.removeEventListener("ps01:select-incident", onSelect);
+  }, []);
+
   const active = incidents.filter((i) => i.lifecycle !== "RESOLVED");
   const detail = incidents.find((i) => i.id === selected) ?? null;
 

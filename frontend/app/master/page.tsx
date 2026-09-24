@@ -20,20 +20,6 @@ const CHART_CHANNELS = [
   "battery_current",
 ];
 
-const OVERVIEW_TABLE = [
-  "bus_voltage",
-  "battery_voltage",
-  "battery_current",
-  "solar_voltage",
-  "solar_current",
-  "heater_power",
-  "panel_temperature",
-  "computer_temperature",
-  "payload_temperature",
-  "tank_temperature",
-  "tank_pressure",
-  "propellant_mass",
-];
 
 function EngineeringDetail({ engineering }: { engineering: Record<string, unknown> }) {
   const rows: [string, string, string][] = [
@@ -89,6 +75,9 @@ export default function MasterConsole() {
   if (checking || !user) return null;
 
   const { frame, run, history } = live;
+  // The table is built from the server's role-filtered channel dictionary rather than
+  // a hand-kept list, so it cannot drift from what this account is actually permitted.
+  const permittedChannels = Object.keys(meta);
   const stale =
     live.dataAgeS !== null && live.dataAgeS >= freshness.warning_after_s && run?.status === "RUNNING";
 
@@ -249,7 +238,11 @@ export default function MasterConsole() {
           </Panel>
         </div>
 
-        <Panel title="Subsystem telemetry" subtitle="All permitted channels with their quality">
+        <Panel
+          title="Subsystem telemetry"
+          subtitle="Every channel this role may read, in configuration order"
+          actions={<StatusBadge tone="accent">{permittedChannels.length} channels</StatusBadge>}
+        >
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-panel">
@@ -262,7 +255,7 @@ export default function MasterConsole() {
                 </tr>
               </thead>
               <tbody>
-                {OVERVIEW_TABLE.map((id) => (
+                {permittedChannels.map((id) => (
                   <ChannelTableRow key={id} channelId={id} frame={frame} meta={meta} />
                 ))}
               </tbody>
@@ -271,7 +264,7 @@ export default function MasterConsole() {
         </Panel>
 
         <div id="incident-panel">
-          <Phase3Operations />
+          <Phase3Operations runId={run?.run_id ?? null} history={history} />
         </div>
       </div>
     </AppShell>

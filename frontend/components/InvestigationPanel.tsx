@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
-import { StatusBadge } from "@/components/primitives";
+import { Panel, StatusBadge } from "@/components/primitives";
 
 interface Statement { statement: string; evidence_ids: string[] }
 interface Analysis {
@@ -30,6 +30,11 @@ export function InvestigationPanel({ incidentId }: { incidentId: string }) {
 
   useEffect(() => {
     let active = true;
+    // Selecting another incident must not leave the previous one's analysis on screen.
+    // This is a read of a stored result; it never asks the provider for anything, so
+    // changing selection costs no budget.
+    setAnalysis(null);
+    setError(null);
     api.get<Analysis>(`/incidents/${incidentId}/analysis/latest`)
       .then((value) => { if (active) setAnalysis(value); })
       .catch((value) => {
@@ -58,16 +63,27 @@ export function InvestigationPanel({ incidentId }: { incidentId: string }) {
 
   const result = analysis?.result;
   const content = result?.investigation;
-  return <div className="space-y-2 border-t border-edge pt-2 text-xs">
+  return <Panel
+    title="AI incident investigation"
+    subtitle="Explanation of stored evidence — separate from detection and forecasting"
+    actions={analysis ? <StatusBadge tone="accent">{analysis.generation_mode}</StatusBadge> : null}
+  >
+   <div className="space-y-2 text-xs">
+    {/* Who did what. A judge should not have to guess which part of this console is a
+        model and which part is arithmetic. */}
+    <div className="rounded border border-edge/70 bg-void/40 px-2 py-1.5 text-[10px] leading-relaxed text-ink-faint">
+      Mathematics detected this incident and produced the forecast.
+      {" "}Gemini only read the stored evidence and explained it.
+      {" "}It cannot approve, execute or change anything on the spacecraft.
+    </div>
     <div className="flex flex-wrap items-center gap-2">
       <button type="button" disabled={busy} onClick={() => void investigate()} className="rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">
         {busy ? "Requesting…" : "Investigate stored evidence"}
       </button>
       {analysis ? <StatusBadge tone={analysis.status === "COMPLETED" ? "nominal" : "warning"}>{analysis.status}</StatusBadge> : null}
-      {analysis ? <StatusBadge tone="accent">{analysis.generation_mode}</StatusBadge> : null}
       {analysis?.cached ? <StatusBadge tone="nominal">Cached revision</StatusBadge> : null}
+      {!analysis ? <span className="text-ink-faint">No investigation stored for this incident yet.</span> : null}
     </div>
-    <p className="text-[10px] text-ink-faint">Read-only analysis. It cannot execute recovery or change thresholds.</p>
     {error ? <p className="text-critical">{error}</p> : null}
     {result?.fallback_reason ? <p className="text-warning">Template fallback: {result.fallback_reason.replaceAll("_", " ").toLowerCase()}.</p> : null}
     {content ? <div className="space-y-2 rounded border border-edge/70 p-2">
@@ -80,5 +96,6 @@ export function InvestigationPanel({ incidentId }: { incidentId: string }) {
       <ul className="list-disc pl-4 text-ink-dim">{content.next_checks.map((item) => <li key={item}>{item}</li>)}</ul>
       <p className="text-[10px] text-ink-faint">Evidence trail: {result.evidence_trail.map((item) => item.tool).join(" → ")}</p>
     </div> : null}
-  </div>;
+   </div>
+  </Panel>;
 }

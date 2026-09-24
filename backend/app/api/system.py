@@ -96,5 +96,21 @@ def coverage(role: Role = Depends(current_role)) -> dict[str, Any]:
             }
             for action in config.actions.actions
         ],
+        # The reserve boundaries a console draws on a projection chart. `battery_soc`
+        # carries its warning bound in `telemetry.yaml`, but the critical reserve lives
+        # only in the ENERGY_RESERVE rule, and a chart must not invent the number it
+        # draws a line at.
+        "energy_reserve": _energy_reserve_thresholds(config),
         "executable_by_this_role": role is Role.MASTER,
+    }
+
+
+def _energy_reserve_thresholds(config: Any) -> dict[str, float | None]:
+    rule = config.rules.by_id("ENERGY_RESERVE")
+    params = rule.params if rule else {}
+    warning = params.get("warning_percent")
+    critical = params.get("critical_percent")
+    return {
+        "warning_percent": float(warning) if isinstance(warning, (int, float)) else None,
+        "critical_percent": float(critical) if isinstance(critical, (int, float)) else None,
     }

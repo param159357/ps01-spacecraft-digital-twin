@@ -18,7 +18,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
-os.environ.setdefault("APP_ORIGIN", "http://localhost:3000")
+# The suite drives the API from TEST_ORIGIN below, so it must own these two settings
+# rather than inherit them. A deployment `.env` — a public HTTPS origin with
+# COOKIE_SECURE=true — otherwise makes the API reject every test login as a cross-site
+# request, and about thirty tests fail on a completely healthy codebase. Setting them
+# here keeps `pytest` reproducible no matter what the local `.env` is pointed at.
+os.environ["APP_ORIGIN"] = "http://localhost:3000"
+os.environ["COOKIE_SECURE"] = "false"
 
 from app.config.settings import get_settings  # noqa: E402
 

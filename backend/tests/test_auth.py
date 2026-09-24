@@ -202,6 +202,20 @@ def test_coverage_endpoint_reports_what_actually_works(client):
     assert body["executable_by_this_role"] is True
 
 
+def test_coverage_endpoint_publishes_the_configured_reserve_thresholds(client):
+    """A console draws these as limit lines, so they must come from the configuration
+    rather than being hard-coded in a chart component."""
+    from app.config.loader import load_configuration
+
+    login(client, "master")
+    body = client.get("/api/config/coverage").json()
+    params = load_configuration().rules.by_id("ENERGY_RESERVE").params
+    assert body["energy_reserve"]["warning_percent"] == params["warning_percent"]
+    assert body["energy_reserve"]["critical_percent"] == params["critical_percent"]
+    # Ordering matters to anyone drawing them: critical sits below warning.
+    assert body["energy_reserve"]["critical_percent"] < body["energy_reserve"]["warning_percent"]
+
+
 # ------------------------------------------------------------------------ throttling
 
 

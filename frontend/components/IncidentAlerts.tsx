@@ -186,7 +186,13 @@ export function IncidentAlerts() {
   const view = useCallback(
     (incidentId: string) => {
       dismiss(incidentId);
-      document.getElementById("incident-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Ask the incident panel for *this* incident. Scrolling alone would land the
+      // operator on whichever incident happened to be selected, which is not the one
+      // the alert was about.
+      window.dispatchEvent(new CustomEvent("ps01:select-incident", { detail: incidentId }));
+      document
+        .getElementById("incident-panel")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
     },
     [dismiss],
   );
