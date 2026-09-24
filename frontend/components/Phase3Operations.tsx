@@ -95,6 +95,21 @@ const SEVERITY_RANK: Record<Incident["severity"], number> = {
 // reader assuming "100% reduction" would expect.
 const DUTY_OPTIONS = [0, 50, 100] as const;
 
+/** Whole seconds left before a proposal expires, floored at zero. */
+function secondsLeft(expiresAtUtc: string, now: number): number {
+  return Math.max(0, Math.ceil((Date.parse(expiresAtUtc) - now) / 1000));
+}
+
+/** "ISOLATE_OPTIONAL_BRANCH at 50% duty — thermal", from the record's own fields. */
+function describe(proposal: RaisedProposal): string {
+  const duty = proposal.action_arguments?.duty_percent;
+  const argument = typeof duty === "number" ? ` at ${duty}% duty` : "";
+  const who = proposal.requested_by
+    ? ` — ${proposal.requested_by}${proposal.requested_by_role ? ` (${proposal.requested_by_role})` : ""}`
+    : "";
+  return `${proposal.action_id}${argument}${who}`;
+}
+
 function endSoc(value: Forecast | null): string {
   const values = value?.series.find((s) => s.channel_id === "battery_soc")?.values ?? [];
   const final = values.at(-1);
@@ -118,7 +133,12 @@ export function Phase3Operations({
     warning: null,
     critical: null,
   });
-  const [raised, setRaised] = useState<RaisedProposal[]>([]);
+  const [raisedByIncident, setRaisedByIncident] = useState<Record<string, RaisedProposal[]>>(
+    {},
+  );
+  const [notices, setNotices] = useState<RaisedProposal[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const announced = useRef<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const commandRef = useRef<Command | null>(null);
@@ -155,6 +175,9 @@ export function Phase3Operations({
     setCommand(null);
     setDuty(0);
     setError(null);
+    setRaisedByIncident({});
+    setNotices([]);
+    announced.current.clear();
   }, [runId]);
 
   const refresh = useCallback(async () => {
@@ -215,28 +238,44 @@ export function Phase3Operations({
   }, []);
 
   const selected = active.find((incident) => incident.id === selectedId) ?? null;
+  // A stable string key: the array identity changes on every poll, the ids do not.
+  const activeIds = active.map((incident) => incident.id).join(",");
 
   // A comparison belongs to the incident and duty it was computed for.
   useEffect(() => {
     setComparison(null);
     setCommand(null);
-    setRaised([]);
   }, [selectedId]);
 
-  // Recommendations a specialist has raised on this incident. The master approves the
-  // specialist's exact proposal rather than re-deriving one and hoping it matches.
+  // Recommendations a specialist has raised, across *every* active incident.
+  //
+  // Polling only the selected incident was a real hole: a thermal engineer could raise a
+  // valid thirty-second recommendation while the master was reading the power incident,
+  // and it would expire unseen. The endpoint stays scoped per incident, so fanning out
+  // over the incidents this console already sees adds no visibility and needs no new
+  // backend surface.
   useEffect(() => {
-    if (!selectedId) return;
+    if (!activeIds.length) {
+      setRaisedByIncident({});
+      return;
+    }
     let stop = false;
+    const ids = activeIds.split(",");
     async function poll() {
-      try {
-        const body = await api.get<{ proposals: RaisedProposal[] }>(
-          `/incidents/${selectedId}/proposals`,
-        );
-        if (!stop) setRaised(body.proposals.filter((p) => p.requested_by_role !== "MASTER"));
-      } catch {
-        // Advisory only; a dropped poll must not disturb the console.
-      }
+      const entries = await Promise.all(
+        ids.map(async (id): Promise<[string, RaisedProposal[]]> => {
+          try {
+            const body = await api.get<{ proposals: RaisedProposal[] }>(
+              `/incidents/${id}/proposals`,
+            );
+            // A master's own comparison is not a recommendation to itself.
+            return [id, body.proposals.filter((p) => p.requested_by_role !== "MASTER")];
+          } catch {
+            return [id, []];
+          }
+        }),
+      );
+      if (!stop) setRaisedByIncident(Object.fromEntries(entries));
     }
     void poll();
     const id = window.setInterval(() => void poll(), 3000);
@@ -244,7 +283,30 @@ export function Phase3Operations({
       stop = true;
       window.clearInterval(id);
     };
-  }, [selectedId]);
+  }, [activeIds]);
+
+  // Drives the countdown: a recommendation with eight seconds left should say so.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // One notice per newly arrived recommendation, deduplicated by proposal id so a poll
+  // cannot re-announce the same one.
+  useEffect(() => {
+    const fresh: RaisedProposal[] = [];
+    for (const list of Object.values(raisedByIncident)) {
+      for (const proposal of list) {
+        if (!announced.current.has(proposal.id)) {
+          announced.current.add(proposal.id);
+          fresh.push(proposal);
+        }
+      }
+    }
+    if (fresh.length) setNotices((current) => [...current, ...fresh].slice(-3));
+  }, [raisedByIncident]);
+
+  const raised = selectedId ? (raisedByIncident[selectedId] ?? []) : [];
 
   async function compare(actionId: string, dutyPercent: number) {
     if (!selected) return;
@@ -316,6 +378,61 @@ export function Phase3Operations({
 
   return (
     <div className="space-y-4">
+      {notices.length ? (
+        <div role="status" aria-live="polite" className="space-y-1.5">
+          {notices.map((proposal) => {
+            const left = secondsLeft(proposal.expires_at_utc, now);
+            const incidentId = Object.keys(raisedByIncident).find((id) =>
+              (raisedByIncident[id] ?? []).some((p) => p.id === proposal.id),
+            );
+            // An expired or already-approved recommendation is not actionable, so its
+            // notice offers no action and simply states what happened.
+            const live = Boolean(incidentId) && left > 0;
+            return (
+              <div
+                key={proposal.id}
+                className={`flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-xs ${
+                  live ? "border-accent/50 bg-accent/10" : "border-edge bg-panel"
+                }`}
+              >
+                <span className={live ? "text-accent" : "text-ink-faint"}>
+                  {live
+                    ? `Specialist recommendation: ${describe(proposal)} — ${left}s left`
+                    : `Recommendation no longer available: ${describe(proposal)}`}
+                </span>
+                <span className="flex items-center gap-2">
+                  {live && incidentId ? (
+                    <button
+                      type="button"
+                      className="rounded border border-accent bg-accent/10 px-2 py-1 text-accent"
+                      onClick={() => {
+                        setSelectedId(incidentId);
+                        setNotices((current) => current.filter((n) => n.id !== proposal.id));
+                        document
+                          .getElementById("incident-panel")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                    >
+                      Open for approval
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label="Dismiss recommendation notice"
+                    className="rounded px-1.5 text-ink-faint hover:text-ink"
+                    onClick={() =>
+                      setNotices((current) => current.filter((n) => n.id !== proposal.id))
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
       <div className="grid gap-4 xl:grid-cols-3">
         {/* ------------------------------------------------ active incidents */}
         <Panel
@@ -346,9 +463,24 @@ export function Phase3Operations({
                     >
                       <span className="flex items-center justify-between gap-2">
                         <span className="tnum truncate text-ink">{incident.rule_id}</span>
-                        <StatusBadge tone={SEVERITY_TONE[incident.severity]}>
-                          {incident.severity}
-                        </StatusBadge>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {/* A pending recommendation is announced on the card it belongs
+                              to, so the master does not have to be looking at the right
+                              incident already. It disappears the moment the proposal is
+                              approved, replaced or expires, because it is derived from
+                              the live listing rather than stored here. */}
+                          {(raisedByIncident[incident.id] ?? []).length ? (
+                            <StatusBadge tone="accent">
+                              rec {secondsLeft(
+                                (raisedByIncident[incident.id] ?? [])[0].expires_at_utc,
+                                now,
+                              )}s
+                            </StatusBadge>
+                          ) : null}
+                          <StatusBadge tone={SEVERITY_TONE[incident.severity]}>
+                            {incident.severity}
+                          </StatusBadge>
+                        </span>
                       </span>
                       <span className="mt-0.5 block truncate text-ink-faint">
                         {incident.subsystem} · {incident.affected_entity} · {incident.lifecycle}
@@ -357,6 +489,11 @@ export function Phase3Operations({
                       <span className="mt-1 block line-clamp-2 text-ink-dim">
                         {incident.observed_evidence.at(-1)?.text}
                       </span>
+                      {(raisedByIncident[incident.id] ?? []).map((proposal) => (
+                        <span key={proposal.id} className="mt-1 block truncate text-accent">
+                          Recommendation pending: {describe(proposal)}
+                        </span>
+                      ))}
                     </button>
                   </li>
                 );
@@ -438,7 +575,8 @@ export function Phase3Operations({
                           : ""}
                         {proposal.requested_by ? ` — ${proposal.requested_by}` : ""}
                         <span className="text-ink-faint">
-                          {" "}(expires {proposal.expires_at_utc.slice(11, 19)} UTC)
+                          {" "}(expires {proposal.expires_at_utc.slice(11, 19)} UTC —{" "}
+                          {secondsLeft(proposal.expires_at_utc, now)}s left)
                         </span>
                       </span>
                       <button
