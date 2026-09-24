@@ -22,42 +22,6 @@ const CHART_CHANNELS = ["battery_soc", "load_power", "battery_temperature"];
 // why it has stopped instead of letting the request fail validation.
 const MAX_COMPUTER_RESETS = 20;
 
-// What each preset actually does, measured against a live run rather than assumed. The
-// point of stating the timing is that a demonstration goes wrong when the presenter
-// expects an incident that the rules are still correctly waiting to justify.
-const PRESET_EXPECTATIONS: { id: string; timing: string; detail: string }[] = [
-  {
-    id: "D01 eclipse transition",
-    timing: "immediate, no incident",
-    detail:
-      "The scheduled eclipse arrives about 10 s in and generation falls to zero. No incident opens, and that is the result: an expected eclipse is not a fault, and GENERATION_SHORTFALL is gated on sunlight for exactly that reason.",
-  },
-  {
-    id: "D02 recovery demo",
-    timing: "delayed ~3 s, then needs an approved command",
-    detail:
-      "ENERGY_RESERVE opens as WARNING within about 3 s — triggered by the 30-minute projection crossing the 20% reserve, not because the observed 24% is low yet. Reducing payload duty removes the projected crossing; the measured load then falls about 80 W and the outcome reads IMPROVED.",
-  },
-  {
-    id: "D03 delayed response",
-    timing: "delayed ~3 s, escalates over minutes",
-    detail:
-      "ENERGY_RESERVE opens as WARNING within about 3 s. Escalation to CRITICAL needs observed state of charge to cross 10%, which from a starting 11% takes roughly two to three minutes — slower in sunlight, where the array covers most of the load, and faster once the eclipse begins. Leave it alone and narrate the wait.",
-  },
-  {
-    id: "D04 stuck branch",
-    timing: "immediate load, thermal after ~60 s, then an approved command",
-    detail:
-      "Requested load rises about 150 W at once and ENERGY_RESERVE opens within about 3 s. The payload node starts at a labelled 53 °C, so it passes its 55 °C limit after roughly 50 s and THERMAL_LIMIT opens once 10 s of persistence is met. Approving branch isolation drops the measured load about 150 W and turns the payload temperature downwards.",
-  },
-  {
-    id: "D04 with a failed isolator",
-    timing: "identical until the command is approved",
-    detail:
-      "Indistinguishable from D04 on telemetry alone — the same two incidents at the same times. The difference appears only after approval: the command reports APPLIED, the measured load does not move, and the observed outcome is NO_CHANGE. A failed recovery, not a rejected command, and the incidents stay open.",
-  },
-];
-
 function ControlButton({
   label,
   onClick,
@@ -87,18 +51,90 @@ function ControlButton({
   );
 }
 
-/** What to expect after using a control, and when.
- *
- * Kept visually distinct from `hint`, which says what the control *is*. Every figure here
- * comes from the configuration or from a measured audit run, not from an impression: a
- * demonstration is easier to narrate when the operator knows whether an effect is
- * immediate, delayed, conditional, or only visible after an approved command.
- */
-function Expected({ children }: { children: React.ReactNode }) {
+// One or two short lines each. Every timing is from the configuration or a measured run.
+const SCENARIO_GUIDE: [string, string][] = [
+  [
+    "D01 eclipse transition",
+    "Eclipse arrives ~10 s in and generation falls to zero. No incident — an expected eclipse is not a fault.",
+  ],
+  [
+    "D02 recovery demo",
+    "ENERGY_RESERVE WARNING in ~3 s, opened by the 30-minute projection. Approving payload reduction clears it and the load falls ~80 W.",
+  ],
+  [
+    "D03 delayed response",
+    "ENERGY_RESERVE WARNING in ~3 s. Escalates to CRITICAL only once observed charge crosses 10% — two to three minutes from 11%.",
+  ],
+  [
+    "D04 stuck branch",
+    "Load rises ~150 W at once; payload passes 55 °C after ~50 s. Approving branch isolation drops the load and cools it.",
+  ],
+  [
+    "D04 with a failed isolator",
+    "Identical to D04 until approval. The command then reports APPLIED but the load does not move, so the outcome is NO_CHANGE.",
+  ],
+];
+
+const HIDDEN_HELP: [string, string][] = [
+  [
+    "Generation factor",
+    "Immediate. GENERATION_SHORTFALL follows in ~3 s, but only in sunlight with demand and an unexpected discharge.",
+  ],
+  [
+    "Unexplained extra load",
+    "Immediate. No incident by itself — ENERGY_RESERVE needs observed charge or the projection to cross the 20% reserve.",
+  ],
+  [
+    "Heater stuck on",
+    "Immediate: ~30 W drawn while commanded OFF. ACTUATOR_MISMATCH opens ~3 s later.",
+  ],
+  [
+    "Optional branch stuck on",
+    "Load rises ~150 W at once, but the payload node needs ~9 minutes to reach 55 °C from 25 °C. D04 starts it at 53 °C instead.",
+  ],
+  [
+    "Isolator does not respond",
+    "Nothing changes and nothing opens. Only observable after an approved isolation command fails to move the load.",
+  ],
+  [
+    "Loss of contact",
+    "DATA_STALE after 3 s, CRITICAL after 10 s. The run keeps advancing and consoles stay connected but stale.",
+  ],
+];
+
+const COMMANDED_HELP: [string, string][] = [
+  [
+    "Payload duty",
+    "Immediate, up to 80 W. This is the same action a master approves as REDUCE_PAYLOAD_POWER.",
+  ],
+  [
+    "Cold-gas valve open",
+    "Immediate: propellant mass and tank pressure start falling. No propulsion rule is implemented, so nothing opens.",
+  ],
+  [
+    "Heater thermostat",
+    "Immediate, and visible to operators as context. Opens no incident; it is a legitimate command.",
+  ],
+];
+
+// Collapsed by default. The console is for operating the vehicle; the explanation of
+// what each control does is reference material, so it stays one click away rather than
+// taking up permanent room under every slider.
+function Help({ title, items }: { title: string; items: [string, string][] }) {
   return (
-    <p className="mt-1 text-[10px] text-ink-dim">
-      <span className="text-accent">Expected response:</span> {children}
-    </p>
+    <details className="mt-3 border-t border-edge pt-2">
+      <summary className="cursor-pointer text-[11px] text-ink-faint hover:text-accent">
+        &#9432; {title}
+      </summary>
+      <dl className="mt-2 space-y-1.5 text-[10px]">
+        {items.map(([name, detail]) => (
+          <div key={name}>
+            <dt className="text-ink-dim">{name}</dt>
+            <dd className="text-ink-faint">{detail}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
 
@@ -110,7 +146,6 @@ function Slider({
   step,
   unit,
   hint,
-  expected,
   onCommit,
 }: {
   label: string;
@@ -120,7 +155,6 @@ function Slider({
   step: number;
   unit: string;
   hint?: string;
-  expected?: React.ReactNode;
   onCommit: (value: number) => void;
 }) {
   const [local, setLocal] = useState(value);
@@ -148,7 +182,6 @@ function Slider({
         className="w-full accent-[var(--color-accent)]"
       />
       {hint ? <p className="text-[10px] text-ink-faint">{hint}</p> : null}
-      {expected ? <Expected>{expected}</Expected> : null}
     </div>
   );
 }
@@ -157,13 +190,11 @@ function Toggle({
   label,
   checked,
   hint,
-  expected,
   onChange,
 }: {
   label: string;
   checked: boolean;
   hint?: string;
-  expected?: React.ReactNode;
   onChange: (value: boolean) => void;
 }) {
   return (
@@ -177,7 +208,6 @@ function Toggle({
       <span>
         <span className="block text-xs text-ink-dim">{label}</span>
         {hint ? <span className="block text-[10px] text-ink-faint">{hint}</span> : null}
-        {expected ? <Expected>{expected}</Expected> : null}
       </span>
     </label>
   );
@@ -503,19 +533,7 @@ export default function SimulatorConsole() {
               falsified to force a dramatic result.
             </p>
 
-            {/* Measured against a live run, not estimated. An incident is never attached
-                to a preset name: each one below is what the configured rules do with the
-                telemetry these starting conditions produce. */}
-            <dl className="mt-3 space-y-2 border-t border-edge pt-3 text-[10px]">
-              {PRESET_EXPECTATIONS.map(({ id, timing, detail }) => (
-                <div key={id}>
-                  <dt className="text-ink-dim">
-                    {id} <span className="text-accent">· {timing}</span>
-                  </dt>
-                  <dd className="text-ink-faint">{detail}</dd>
-                </div>
-              ))}
-            </dl>
+            <Help title="Scenario guide" items={SCENARIO_GUIDE} />
             <dl className="mt-4 space-y-1 text-xs">
               <div className="flex justify-between">
                 <dt className="text-ink-faint">Run ID</dt>
@@ -561,9 +579,9 @@ export default function SimulatorConsole() {
               </p>
             </div>
 
-            <details className="mt-3 border-t border-edge pt-3">
-              <summary className="cursor-pointer text-xs text-ink-dim hover:text-accent">
-                Advanced reset settings
+            <details className="mt-3 rounded border border-edge-strong bg-panel-raised p-2.5">
+              <summary className="cursor-pointer text-xs font-medium text-accent">
+                Advanced starting conditions
               </summary>
               <div className="mt-3 space-y-4">
                 <p className="text-[10px] text-ink-faint">
@@ -650,16 +668,6 @@ export default function SimulatorConsole() {
                 step={0.05}
                 unit=""
                 hint="Panel output multiplier. Operators must estimate this from observations."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — panel current follows within one tick, and
-                    the battery swings from charging to discharging.{" "}
-                    <strong>Conditional</strong> — GENERATION_SHORTFALL opens about 3 s
-                    later, but only in sunlight, while demand or charge headroom exists and
-                    the battery is discharging unexpectedly. In eclipse it stays quiet,
-                    because zero output is then correct.
-                  </>
-                }
                 onCommit={(v) => void commit({ generation_factor: v })}
               />
               <Slider
@@ -670,82 +678,34 @@ export default function SimulatorConsole() {
                 step={5}
                 unit="W"
                 hint="An uncontrolled fault load. It cannot be shed by the load-shedding policy."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — requested load rises by this amount within
-                    one tick. <strong>Conditional</strong> — no incident on its own.
-                    ENERGY_RESERVE needs observed state of charge or the 30-minute projection
-                    to cross the configured 20% reserve, so at a healthy reserve a large load
-                    is simply a large load.
-                  </>
-                }
                 onCommit={(v) => void commit({ extra_load_w: v })}
               />
               <Toggle
                 label="Heater stuck on"
                 checked={conditions.heater_stuck_on}
                 hint="The actuator ignores its command. Observed state will differ from commanded."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — measured heater power rises to about 30 W
-                    and total demand rises with it, while the thermostat still commands OFF.
-                    {" "}
-                    <strong>Delayed ~3 s</strong> — ACTUATOR_MISMATCH opens on that
-                    disagreement. It names a discrepancy; it does not claim which side is at
-                    fault.
-                  </>
-                }
                 onChange={(v) => void commit({ heater_stuck_on: v })}
               />
               <Toggle
                 label="Optional branch stuck on"
                 checked={conditions.branch_stuck_on}
                 hint="Branch OPTIONAL_A draws its rated power regardless of command. Produces both power and thermal evidence."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — requested load rises about 150 W and the
-                    payload node starts warming. <strong>Delayed</strong> — the payload node
-                    has a 750 s time constant, so from a nominal 25 °C it needs roughly
-                    9 minutes of simulated time to reach its 55 °C limit, plus 10 s of
-                    persistence, before THERMAL_LIMIT opens. That is why the D04 preset starts
-                    the payload at a labelled 53 °C, where the same limit is about 50 s away.
-                  </>
-                }
                 onChange={(v) => void commit({ branch_stuck_on: v })}
               />
               <Toggle
                 label="Isolator does not respond"
                 checked={conditions.isolator_failed}
                 hint="An approved isolation command still applies, but nothing changes — the operator sees a failed recovery."
-                expected={
-                  <>
-                    <strong>Nothing, on its own</strong> — no telemetry moves and no
-                    incident opens from selecting it.{" "}
-                    <strong>Requires an approved command</strong> — it becomes observable
-                    only when a master approves ISOLATE_OPTIONAL_BRANCH: the command reports
-                    APPLIED, the measured load does not move, and the outcome is reported as
-                    NO_CHANGE.
-                  </>
-                }
                 onChange={(v) => void commit({ isolator_failed: v })}
               />
               <Toggle
                 label="Loss of contact"
                 checked={conditions.contact_loss}
                 hint="The vehicle keeps running; nothing reaches the ground. Consoles go stale, not disconnected."
-                expected={
-                  <>
-                    <strong>Delayed 3 s, then 10 s</strong> — frames stop arriving,
-                    DATA_STALE opens as WARNING after 3 s and escalates to CRITICAL after
-                    10 s, and it resolves once fresh frames return and dwell healthy. The run
-                    keeps advancing and every console stays <em>connected</em> with stale
-                    readings, which is what distinguishes a spacecraft outage from a paused
-                    run or a browser dropout.
-                  </>
-                }
                 onChange={(v) => void commit({ contact_loss: v })}
               />
             </div>
+            <Help title="Control behaviour" items={HIDDEN_HELP} />
           </Panel>
 
           <Panel title="Commanded state" subtitle="Known to operators as context">
@@ -758,48 +718,22 @@ export default function SimulatorConsole() {
                 step={50}
                 unit="%"
                 hint="A legitimate command. Operators can see it, which is what makes a mismatch detectable."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — requested load changes by up to 80 W within
-                    one tick, and the payload node cools or warms towards its new
-                    equilibrium. This is the same action a master approves as
-                    REDUCE_PAYLOAD_POWER, so setting it here pre-empts that recovery rather
-                    than demonstrating it.
-                  </>
-                }
                 onCommit={(v) => void commit({ payload_duty_percent: v })}
               />
               <Toggle
                 label="Cold-gas valve open"
                 checked={conditions.valve_open}
                 hint="Commanded valve state. The observed valve channel is published separately."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — the observed valve channel follows,
-                    propellant mass falls at the configured 0.0001 kg/s, tank pressure falls
-                    with it and the thruster node warms slightly.{" "}
-                    <strong>No incident</strong> — PRESSURE_INCONSISTENCY is not
-                    implemented, so this subsystem is displayed and modelled but not
-                    monitored.
-                  </>
-                }
                 onChange={(v) => void commit({ valve_open: v })}
               />
               <Toggle
                 label="Heater thermostat enabled"
                 checked={conditions.heater_auto}
                 hint="Commanded thermostat operation. Disabling it commands the heater off."
-                expected={
-                  <>
-                    <strong>Immediate</strong> — the commanded heater state changes, and
-                    operators see it as context. On its own this opens no incident: it is a
-                    legitimate command, and the thermostat is idle anyway while the battery
-                    sits above its 12 °C off-threshold.
-                  </>
-                }
                 onChange={(v) => void commit({ heater_auto: v })}
               />
             </div>
+            <Help title="Control behaviour" items={COMMANDED_HELP} />
           </Panel>
         </div>
 
