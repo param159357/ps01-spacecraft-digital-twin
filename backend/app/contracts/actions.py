@@ -102,6 +102,10 @@ class ActionProposal(BaseModel):
     outcome_paths: tuple[str, ...] = ()
     rejection_reasons: tuple[str, ...] = ()
     trade_off: str = ""
+    # Which console asked for this comparison. A specialist may raise one as a
+    # recommendation; only the master may approve it.
+    requested_by: str | None = None
+    requested_by_role: str | None = None
 
 
 class CommandStatus(str, Enum):

@@ -35,18 +35,40 @@ function formatClock(seconds: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/**
+ * Where illumination changed between one sample and the next.
+ *
+ * A battery that starts draining at a sunlight-to-eclipse boundary is behaving, not
+ * failing. Without the marker the reader sees an unexplained fall and has to be told;
+ * with it, the chart says so itself.
+ */
+function illuminationChanges(data: HistoryPoint[]): { t: number; to: string }[] {
+  const marks: { t: number; to: string }[] = [];
+  let previous: string | undefined;
+  for (const point of data) {
+    const current = point.illumination;
+    if (typeof current === "string") {
+      if (previous && current !== previous) marks.push({ t: point.t, to: current });
+      previous = current;
+    }
+  }
+  return marks;
+}
+
 export function LiveChart({
   data,
   series,
   meta,
   height = 240,
   showLimits = true,
+  showIllumination = true,
 }: {
   data: HistoryPoint[];
   series: ChartSeries[];
   meta: Record<string, ChannelInfo>;
   height?: number;
   showLimits?: boolean;
+  showIllumination?: boolean;
 }) {
   const leftSeries = series.filter((s) => (s.axis ?? "left") === "left");
   const rightSeries = series.filter((s) => s.axis === "right");
@@ -133,6 +155,25 @@ export function LiveChart({
           wrapperStyle={{ fontSize: 11, color: "#9fb0c9" }}
           formatter={(value) => meta[String(value)]?.label ?? String(value)}
         />
+
+        {showIllumination
+          ? illuminationChanges(data).map((mark) => (
+              <ReferenceLine
+                key={`illum-${mark.t}`}
+                x={mark.t}
+                yAxisId={series[0]?.axis ?? "left"}
+                stroke={mark.to === "ECLIPSE" ? "#6b7e9b" : "#3ddc97"}
+                strokeDasharray="2 3"
+                strokeOpacity={0.8}
+                label={{
+                  value: mark.to === "ECLIPSE" ? "eclipse" : "sunlight",
+                  fill: mark.to === "ECLIPSE" ? "#9fb0c9" : "#3ddc97",
+                  fontSize: 9,
+                  position: "insideTopLeft",
+                }}
+              />
+            ))
+          : null}
 
         {showLimits
           ? series.map((s) => {

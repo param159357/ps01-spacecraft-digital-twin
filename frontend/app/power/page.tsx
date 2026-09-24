@@ -1,28 +1,20 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import { AppShell, headerFromLive } from "@/components/AppShell";
 import { IncidentPanel } from "@/components/IncidentPanel";
 import { IncidentAlerts } from "@/components/IncidentAlerts";
 import { LiveChart } from "@/components/LiveChart";
 import { Panel, StatusBadge } from "@/components/primitives";
 import { ChannelReadout, ChannelTableRow, useChannelMeta } from "@/components/telemetry";
+import { ReserveForecastChart, type ForecastLike } from "@/components/ReserveForecastChart";
+import { SpecialistRecommendation } from "@/components/SpecialistRecommendation";
+import { api } from "@/lib/api";
 import { useRequireRole } from "@/lib/auth";
 import { freshnessTone, useLiveStream } from "@/lib/live";
 
 const CHART_CHANNELS = ["battery_soc", "load_power", "solar_current", "battery_current"];
 
-const DETAIL_CHANNELS = [
-  "solar_voltage",
-  "solar_current",
-  "bus_voltage",
-  "load_power",
-  "battery_soc",
-  "battery_voltage",
-  "battery_current",
-  "battery_temperature",
-  "cell_voltage_spread",
-  "heater_power",
-];
 
 function PowerBoundary({ engineering }: { engineering: Record<string, unknown> }) {
   const rows: [string, string][] = [
@@ -74,15 +66,76 @@ function PowerBoundary({ engineering }: { engineering: Record<string, unknown> }
   );
 }
 
+interface Forecast extends ForecastLike {
+  run_id: string;
+  assumptions: string[];
+  limitations: string[];
+  crossings: { kind: string; seconds_from_source: number }[];
+}
+
 export default function PowerConsole() {
   const { user, checking } = useRequireRole("POWER");
   const live = useLiveStream(CHART_CHANNELS);
   const { meta, freshness } = useChannelMeta();
+  const [forecast, setForecast] = useState<Forecast | null>(null);
+  const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
+  const [reserve, setReserve] = useState<{ warning: number | null; critical: number | null }>({
+    warning: null,
+    critical: null,
+  });
+  const runId = live.run?.run_id ?? null;
+
+  // Configured reserve boundaries, read once. The chart draws what the server says.
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .get<{ energy_reserve?: { warning_percent: number | null; critical_percent: number | null } }>(
+        "/config/coverage",
+        controller.signal,
+      )
+      .then((body) =>
+        setReserve({
+          warning: body.energy_reserve?.warning_percent ?? null,
+          critical: body.energy_reserve?.critical_percent ?? null,
+        }),
+      )
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
+  // A retired run's projection must not be drawn under a new one.
+  useEffect(() => {
+    setForecast(null);
+    setSelectedIncident(null);
+  }, [runId]);
+
+  useEffect(() => {
+    let stop = false;
+    async function poll() {
+      try {
+        const next = await api.get<Forecast>("/forecasts/latest");
+        if (!stop) setForecast(!runId || next.run_id === runId ? next : null);
+      } catch {
+        if (!stop) setForecast(null);
+      }
+    }
+    void poll();
+    const id = window.setInterval(() => void poll(), 3000);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
+  }, [runId]);
+
+  const onIncidentSelect = useCallback((id: string | null) => setSelectedIncident(id), []);
 
   if (checking || !user) return null;
 
   const { frame, run, history } = live;
   const illumination = frame?.context.illumination ?? null;
+  // Built from the server's role-filtered dictionary, so it cannot claim more than
+  // this account may actually read.
+  const permittedChannels = Object.keys(meta);
 
   return (
     <AppShell role="POWER" runState={headerFromLive(live)}>
@@ -181,10 +234,46 @@ export default function PowerConsole() {
             </p>
           </Panel>
 
-          <div id="incident-panel"><IncidentPanel subsystemLabel="Power" /></div>
+          <div id="incident-panel">
+            <IncidentPanel subsystemLabel="Power" onSelect={onIncidentSelect} />
+          </div>
         </div>
 
-        <Panel title="Power channels" subtitle="Every channel this console may read">
+        <Panel
+          title="Reserve projection"
+          subtitle="Solid is observed; dashed is the 30-minute mathematical projection — no AI"
+        >
+          <ReserveForecastChart
+            history={history}
+            baseline={forecast}
+            action={null}
+            warningPercent={reserve.warning}
+            criticalPercent={reserve.critical}
+            height={230}
+          />
+          <div className="mt-2 space-y-1 text-[10px] text-ink-faint">
+            {forecast?.crossings.length ? (
+              <p className="text-warning">
+                Projected {forecast.crossings[0].kind} in about{" "}
+                {Math.round(forecast.crossings[0].seconds_from_source / 60)} min.
+              </p>
+            ) : forecast ? (
+              <p>No configured reserve crossing within this horizon.</p>
+            ) : (
+              <p>No projection available for this run yet. Nothing is drawn rather than zero.</p>
+            )}
+            {forecast?.assumptions.map((line) => <p key={line}>Assumption: {line}</p>)}
+            {forecast?.limitations.map((line) => <p key={line}>Limitation: {line}</p>)}
+          </div>
+        </Panel>
+
+        <SpecialistRecommendation incidentId={selectedIncident} subsystemLabel="Power" />
+
+        <Panel
+          title="Power channels"
+          subtitle="Every channel this console may read, in configuration order"
+          actions={<StatusBadge tone="accent">{permittedChannels.length} channels</StatusBadge>}
+        >
           <div className="max-h-[360px] overflow-auto">
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-panel">
@@ -193,11 +282,12 @@ export default function PowerConsole() {
                   <th className="py-1.5 pr-3 text-right font-medium">Value</th>
                   <th className="py-1.5 pr-3 font-medium">Unit</th>
                   <th className="py-1.5 pr-3 font-medium">Operating limits</th>
+                  <th className="py-1.5 pr-3 font-medium">Coverage</th>
                   <th className="py-1.5 font-medium">Quality</th>
                 </tr>
               </thead>
               <tbody>
-                {DETAIL_CHANNELS.map((id) => (
+                {permittedChannels.map((id) => (
                   <ChannelTableRow key={id} channelId={id} frame={frame} meta={meta} />
                 ))}
               </tbody>

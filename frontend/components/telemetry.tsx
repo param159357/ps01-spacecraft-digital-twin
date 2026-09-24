@@ -168,6 +168,17 @@ export function ChannelTableRow({
       </td>
       <td className="tnum py-1 pr-3 text-ink-faint">{info ? formatUnit(info.unit) : ""}</td>
       <td className="tnum py-1 pr-3 text-ink-faint">{limits}</td>
+      {/* Coverage is declared per channel in telemetry.yaml. Showing it stops a
+          reading being mistaken for something the model predicts when it does not:
+          PROFILE is a deterministic pattern and RULE_ONLY has no forecast at all. */}
+      <td className="py-1 pr-3">
+        <StatusBadge
+          tone={info?.prediction === "MODELLED" ? "accent" : "unavailable"}
+          title={info?.description}
+        >
+          {info?.prediction ?? "—"}
+        </StatusBadge>
+      </td>
       <td className="py-1">
         <StatusBadge tone={usable ? "nominal" : "unavailable"} title={quality?.reason ?? undefined}>
           {quality?.state ?? "NO DATA"}

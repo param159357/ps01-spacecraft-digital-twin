@@ -120,7 +120,12 @@ class OperationalService:
         return updated
 
     async def compare(
-        self, incident_id: UUID, duty: float = 0.0, action_id: str = "REDUCE_PAYLOAD_POWER"
+        self,
+        incident_id: UUID,
+        duty: float = 0.0,
+        action_id: str = "REDUCE_PAYLOAD_POWER",
+        requested_by: str | None = None,
+        requested_by_role: str | None = None,
     ) -> dict[str, Any]:
         """Baseline against one implemented alternative, from the same observed start.
 
@@ -178,6 +183,8 @@ class OperationalService:
                     else "If demand does not fall, the outcome is reported as no change."
                 ),
             ),
+            requested_by=requested_by,
+            requested_by_role=requested_by_role,
             trade_off=(
                 (
                     f"Isolating branch {branch.id} removes its load and its heat. It does "
@@ -195,6 +202,24 @@ class OperationalService:
             "action": action.model_dump(mode="json"),
             "proposal": proposal.model_dump(mode="json"),
         }
+
+    def active_proposals(self, incident_id: UUID) -> list[ActionProposal]:
+        """Unexpired comparisons raised for one incident, newest first.
+
+        Proposals live in this one process and are not persisted: a restart loses
+        them and the operator compares again. They exist so a specialist can put a
+        recommendation in front of the master, who alone may approve it.
+        """
+        now = datetime.now(UTC)
+        return sorted(
+            (
+                p
+                for p in self.proposals.values()
+                if p.incident_id == incident_id and p.expires_at_utc > now
+            ),
+            key=lambda p: p.created_at_utc,
+            reverse=True,
+        )
 
     def accept_command(self, proposal_id: UUID, actor: str, idempotency_key: str) -> CommandRecord:
         proposal = self.proposals.get(proposal_id)

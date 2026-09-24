@@ -115,6 +115,7 @@ def acknowledge(
 async def compare(
     incident_id: UUID,
     body: CompareRequest,
+    auth: AuthenticatedSession = Depends(current_session),
     role: Role = Depends(current_role),
     runner: SimulationRunner = Depends(get_runner),
 ) -> dict[str, Any]:
@@ -140,11 +141,50 @@ async def compare(
             },
         )
     try:
-        return await _service(runner).compare(incident_id, body.duty_percent, body.action_id)
+        return await _service(runner).compare(
+            incident_id,
+            body.duty_percent,
+            body.action_id,
+            requested_by=auth.user.username,
+            requested_by_role=role.value,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=503, detail={"error": "FORECAST_UNAVAILABLE", "message": str(exc)}
         ) from exc
+
+
+@router.get("/incidents/{incident_id}/proposals", dependencies=[Depends(require_operational)])
+def incident_proposals(
+    incident_id: UUID,
+    role: Role = Depends(current_role),
+    runner: SimulationRunner = Depends(get_runner),
+) -> dict[str, Any]:
+    """Unexpired comparisons raised for one incident.
+
+    This is what lets a specialist put a recommendation in front of the master: the
+    specialist raises a comparison, the master sees it here and approves that exact
+    proposal. Scoped by the incident's subsystem, like the incident itself, and
+    read-only — approval remains master-only on POST /commands.
+    """
+    service = _service(runner)
+    incident = service.incident_engine.incidents.get(incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=404, detail={"error": "INCIDENT_NOT_FOUND", "message": "No such incident."}
+        )
+    if not may_act_on(role, incident.subsystem):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "SUBSYSTEM_NOT_ASSIGNED",
+                "message": "Incident is outside this role's scope.",
+            },
+        )
+    return {
+        "proposals": [p.model_dump(mode="json") for p in service.active_proposals(incident_id)],
+        "approval_role": "MASTER",
+    }
 
 
 @router.get("/forecasts/latest", dependencies=[Depends(require_operational)])

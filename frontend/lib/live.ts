@@ -71,7 +71,10 @@ export interface LiveState {
 
 export interface HistoryPoint {
   t: number;
-  [channel: string]: number | null;
+  // Illumination at this sample, so a chart can mark where a transition happened.
+  // It is context, not a channel, which is why it is a separate optional field.
+  illumination?: "SUNLIGHT" | "ECLIPSE";
+  [channel: string]: number | null | string | undefined;
 }
 
 const MAX_HISTORY_POINTS = 900;
@@ -129,7 +132,10 @@ export function useLiveStream(chartChannels: string[] = []): LiveState & {
 
       if (channels.length) {
         setHistory((prev) => {
-          const point: HistoryPoint = { t: Math.round(frame.sim_time_s) };
+          const point: HistoryPoint = {
+            t: Math.round(frame.sim_time_s),
+            illumination: frame.context.illumination,
+          };
           for (const id of channels) {
             const q = frame.quality[id];
             const v = frame.values[id];

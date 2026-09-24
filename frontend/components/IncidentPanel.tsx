@@ -49,7 +49,15 @@ const LIFECYCLE_TONE: Record<IncidentSummary["lifecycle"], StatusTone> = {
   RESOLVED: "nominal",
 };
 
-export function IncidentPanel({ subsystemLabel }: { subsystemLabel: string }) {
+export function IncidentPanel({
+  subsystemLabel,
+  onSelect,
+}: {
+  subsystemLabel: string;
+  // Lets the console put other panels — a recommendation, for instance — on the same
+  // incident the operator is reading, instead of guessing which one that is.
+  onSelect?: (incidentId: string | null) => void;
+}) {
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
   const [hiddenCount, setHiddenCount] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
@@ -99,6 +107,10 @@ export function IncidentPanel({ subsystemLabel }: { subsystemLabel: string }) {
 
   const active = incidents.filter((i) => i.lifecycle !== "RESOLVED");
   const detail = incidents.find((i) => i.id === selected) ?? null;
+
+  useEffect(() => {
+    onSelect?.(detail?.id ?? null);
+  }, [detail?.id, onSelect]);
 
   return (
     <Panel

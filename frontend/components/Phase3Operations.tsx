@@ -59,6 +59,16 @@ interface Comparison {
   };
 }
 
+interface RaisedProposal {
+  id: string;
+  action_id: string;
+  action_arguments: Record<string, unknown>;
+  expires_at_utc: string;
+  trade_off: string;
+  requested_by: string | null;
+  requested_by_role: string | null;
+}
+
 interface Command {
   id: string;
   status: string;
@@ -108,6 +118,7 @@ export function Phase3Operations({
     warning: null,
     critical: null,
   });
+  const [raised, setRaised] = useState<RaisedProposal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const commandRef = useRef<Command | null>(null);
@@ -209,6 +220,30 @@ export function Phase3Operations({
   useEffect(() => {
     setComparison(null);
     setCommand(null);
+    setRaised([]);
+  }, [selectedId]);
+
+  // Recommendations a specialist has raised on this incident. The master approves the
+  // specialist's exact proposal rather than re-deriving one and hoping it matches.
+  useEffect(() => {
+    if (!selectedId) return;
+    let stop = false;
+    async function poll() {
+      try {
+        const body = await api.get<{ proposals: RaisedProposal[] }>(
+          `/incidents/${selectedId}/proposals`,
+        );
+        if (!stop) setRaised(body.proposals.filter((p) => p.requested_by_role !== "MASTER"));
+      } catch {
+        // Advisory only; a dropped poll must not disturb the console.
+      }
+    }
+    void poll();
+    const id = window.setInterval(() => void poll(), 3000);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
   }, [selectedId]);
 
   async function compare(actionId: string, dutyPercent: number) {
@@ -226,6 +261,23 @@ export function Phase3Operations({
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Comparison failed.");
       setComparison(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveProposal(proposalId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      setCommand(
+        await api.post<Command>("/commands", {
+          proposal_id: proposalId,
+          idempotency_key: crypto.randomUUID(),
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Approval failed.");
     } finally {
       setBusy(false);
     }
@@ -372,6 +424,36 @@ export function Phase3Operations({
         <Panel title="Approval and outcome" subtitle="Master only — predefined actions">
           {selected ? (
             <div className="space-y-3 text-xs">
+              {raised.length ? (
+                <div className="space-y-1.5 rounded border border-accent/40 bg-accent/5 p-2">
+                  <p className="text-[10px] tracking-wide text-accent uppercase">
+                    Recommended by a specialist
+                  </p>
+                  {raised.map((proposal) => (
+                    <div key={proposal.id} className="flex flex-wrap items-center gap-2">
+                      <span className="text-ink-dim">
+                        <span className="tnum">{proposal.action_id}</span>
+                        {typeof proposal.action_arguments?.duty_percent === "number"
+                          ? ` at ${proposal.action_arguments.duty_percent}% duty`
+                          : ""}
+                        {proposal.requested_by ? ` — ${proposal.requested_by}` : ""}
+                        <span className="text-ink-faint">
+                          {" "}(expires {proposal.expires_at_utc.slice(11, 19)} UTC)
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void approveProposal(proposal.id)}
+                        className="rounded border border-accent bg-accent/10 px-2 py-1 text-accent disabled:opacity-40"
+                      >
+                        Approve this recommendation
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               <div className="space-y-1.5">
                 <p className="text-ink-faint">
                   Compare payload duty — the level the payload keeps running at, not the
