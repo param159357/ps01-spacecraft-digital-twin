@@ -5,6 +5,73 @@ Newest first within each phase.
 
 ---
 
+## Phase 9 — the reset button raises the commanded target, not the applied count
+
+`computer_resets` is a target, not an event feed: the twin compares it against
+`resets_applied` each tick and, if the target is higher, records exactly one timestamped
+event. So "inject one reset" means "raise the target by one", and the only question is what
+to add one to.
+
+Adding one to `resets_applied` looks equivalent and is not. The vehicle applies one event
+per tick, so a second click arriving inside the same second would read `resets_applied == 0`
+again, command a target of 1 again, and produce one event for two clicks. Adding one to the
+commanded target is correct in both cases. There is a regression test for exactly this, and
+reverting the helper to the `resets_applied` version makes it fail.
+
+The target is also re-read from `GET /simulator/state` at click time rather than taken from
+the component's two-second mirror. A stale mirror would either skip an event or command
+nothing, and a control that silently does nothing is worse than no control.
+
+Three things the button deliberately does not do: it does not write an incident, it does not
+touch the counter, and it does not use a new endpoint. It posts one bounded condition update
+through the same path the presets use, and `RESET_RECURRENCE` is then opened — or not — by
+the rule engine from observed telemetry. That is what makes the demonstration worth
+watching: the incident is a verdict, not a stage direction.
+
+## Phase 9 — frame 0 was never a frame
+
+The run-control panel read `run.frame_seq`, which comes from the run metadata captured with
+the snapshot and is not updated by telemetry events. It therefore read 0 for the whole
+demonstration, next to a simulation that was visibly advancing.
+
+It now reads the newest received frame's own `frame_seq`. When no valid frame has arrived it
+shows an em dash rather than 0, because 0 is a real sequence number and using it for "nothing
+yet" is the same category of error as showing a missing value as zero — which section 1.3
+forbids everywhere else.
+
+## Phase 9 — which advanced controls exist, and why mode is different
+
+Each of the four was checked against the backend before any UI was written, because the
+alternative is a decorative control that pretends to do something:
+
+- **Starting SOC, starting spacecraft clock, starting payload temperature** are already
+  parameters of `POST /simulator/run` with validated ranges, already used by the D03 and D04
+  presets. Exposing them adds a UI for behaviour that was always there.
+- **Operating mode** is real but is not a creation parameter — it is a known command on
+  `ConditionUpdate`, and `MANEUVER` genuinely widens the configured rate and pointing
+  profiles by the vehicle's `maneuver_scale`. The console therefore resets first and commands
+  the mode immediately afterwards, so the new run begins in it. The panel says that plainly
+  instead of implying mode is baked into the run, and mode stays changeable mid-run.
+
+`SAFE` was left out of the list. The twin honours it, but starting a run in SAFE means
+starting with the payload already shed — a scenario, not a setting, and one D03 already
+covers. The section is collapsed by default because these are not the controls a
+demonstration normally touches, and it resets into a paused run so the values are visibly
+starting conditions rather than an edit to a run in flight.
+
+## Phase 9 — the 28 channels stay read-only
+
+Making a telemetry reading directly editable would be the quickest way to make any scenario
+appear on screen, and it would hollow out the whole product. Every reading a console shows
+has to be something the model computed from state the simulator actually holds; otherwise
+detection, forecasting and investigation are all commenting on a number nobody derived.
+
+The honest equivalent is what this change does: expose the *cause* — a reset, a starting
+temperature, a mode — and let the readings follow. Where no such cause is modelled, as with
+attitude disturbance, the answer stays no rather than a slider.
+
+---
+
 ## Phase 9 — rehydration happens on a run's first frame, not at startup
 
 The obvious place to reload active incidents is the lifespan. It is the wrong place. At

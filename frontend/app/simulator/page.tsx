@@ -18,6 +18,10 @@ import {
 
 const CHART_CHANNELS = ["battery_soc", "load_power", "battery_temperature"];
 
+// Mirrors the bound the backend enforces on `computer_resets`, so the button can say
+// why it has stopped instead of letting the request fail validation.
+const MAX_COMPUTER_RESETS = 20;
+
 function ControlButton({
   label,
   onClick,
@@ -130,6 +134,19 @@ export default function SimulatorConsole() {
   const [truth, setTruth] = useState<SimulatorTruthView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The reset injection keeps its own pending flag rather than sharing `busy`, so a
+  // click cannot be repeated while the request is in flight and the rest of the panel
+  // stays usable.
+  const [injectingReset, setInjectingReset] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Starting conditions for the next reset. They are applied when a run is created,
+  // never to a run already in progress.
+  const [advanced, setAdvanced] = useState({
+    initial_soc_percent: 70,
+    initial_sim_time_s: 0,
+    initial_payload_temperature_c: 25,
+    mode: "NOMINAL",
+  });
 
   // Local mirror of the injected conditions so the controls stay responsive.
   const [conditions, setLocalConditions] = useState({
@@ -182,6 +199,77 @@ export default function SimulatorConsole() {
       await refreshTruth();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Run control failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Raise the commanded reset total by exactly one.
+
+   * The vehicle records one timestamped event per increment, so this produces one real
+   * reset through the ordinary condition pipeline — the same path the presets use. The
+   * incident is left entirely to the rule engine: two distinct events inside the
+   * configured window open `RESET_RECURRENCE` on their own, and nothing here writes an
+   * incident or touches the counter directly.
+   *
+   * The target is read back from the authoritative simulator state at click time rather
+   * than from this component's 2-second mirror, because incrementing a stale value would
+   * either skip an event or do nothing at all.
+   */
+  async function injectComputerReset() {
+    setInjectingReset(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const state = await fetchSimulatorState();
+      const current = Number(state.truth?.hidden_conditions.computer_resets ?? 0);
+      if (current >= MAX_COMPUTER_RESETS) {
+        setError(
+          `The simulator accepts at most ${MAX_COMPUTER_RESETS} resets in one run. Reset the run to inject more.`,
+        );
+        return;
+      }
+      const before = Number(state.truth?.resets_applied ?? 0);
+      await setConditions({ computer_resets: current + 1 });
+      setNotice(
+        `Reset ${current + 1} commanded. The vehicle records the event on its next tick` +
+          `${running ? "" : " — the run is not advancing, so resume it to see the event"}.` +
+          ` ${before} recorded so far.`,
+      );
+      await refreshTruth();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not inject a computer reset.");
+    } finally {
+      setInjectingReset(false);
+    }
+  }
+
+  /** Reset into the starting conditions chosen above, then hold the run paused.
+
+   * Every value here is a validated parameter the backend already accepts on run
+   * creation. The operating mode is not a creation parameter — it is a known command —
+   * so it is commanded immediately after the new run exists, which is what makes the run
+   * begin in that mode.
+   */
+  async function resetWithAdvanced() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await runControl("RESET", {
+        initial_soc_percent: advanced.initial_soc_percent,
+        initial_sim_time_s: advanced.initial_sim_time_s,
+        initial_payload_temperature_c: advanced.initial_payload_temperature_c,
+      });
+      if (advanced.mode !== "NOMINAL") await setConditions({ mode: advanced.mode });
+      setNotice(
+        `New run created and held paused at ${advanced.initial_soc_percent}% SOC, ` +
+          `clock ${advanced.initial_sim_time_s} s, payload ` +
+          `${advanced.initial_payload_temperature_c} °C, mode ${advanced.mode}. Press Resume to run it.`,
+      );
+      await refreshTruth();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not reset with those settings.");
     } finally {
       setBusy(false);
     }
@@ -295,6 +383,15 @@ export default function SimulatorConsole() {
           </p>
         ) : null}
 
+        {notice ? (
+          <p
+            role="status"
+            className="rounded border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent"
+          >
+            {notice}
+          </p>
+        ) : null}
+
         <div className="grid gap-4 xl:grid-cols-3">
           <Panel
             title="Run control"
@@ -355,7 +452,11 @@ export default function SimulatorConsole() {
               </div>
               <div className="flex justify-between">
                 <dt className="text-ink-faint">Frame</dt>
-                <dd className="tnum text-ink">{run?.frame_seq ?? 0}</dd>
+                {/* The newest frame actually received, not the run metadata's count,
+                    which is captured once with the snapshot and then never moves. No
+                    valid frame reads as an em dash: frame 0 is a real sequence number
+                    and must not stand in for "nothing yet". */}
+                <dd className="tnum text-ink">{frame ? frame.frame_seq : "—"}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-ink-faint">Tick interval</dt>
@@ -366,6 +467,98 @@ export default function SimulatorConsole() {
                 <dd className="tnum text-ink">{run?.control_revision ?? 0}</dd>
               </div>
             </dl>
+            <div className="mt-4 border-t border-edge pt-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <ControlButton
+                  label={injectingReset ? "Injecting…" : "Inject computer reset"}
+                  onClick={() => void injectComputerReset()}
+                  busy={injectingReset || !run?.run_id}
+                />
+                <span className="tnum text-[10px] text-ink-faint">
+                  {truth ? `${truth.resets_applied} recorded` : "no run"}
+                  {truth?.reset_events_s?.length
+                    ? ` at ${truth.reset_events_s.map((t) => t.toFixed(0)).join(", ")} s`
+                    : ""}
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] text-ink-faint">
+                One click commands one more reset, and the vehicle records one timestamped
+                event for it on its next tick. Two distinct events inside the configured
+                window are what open <span className="text-ink-dim">RESET_RECURRENCE</span>
+                {" "}on the flight console — the rule does that from observed telemetry, so
+                click twice and wait rather than expecting an incident from the first one.
+              </p>
+            </div>
+
+            <details className="mt-3 border-t border-edge pt-3">
+              <summary className="cursor-pointer text-xs text-ink-dim hover:text-accent">
+                Advanced reset settings
+              </summary>
+              <div className="mt-3 space-y-4">
+                <p className="text-[10px] text-ink-faint">
+                  Starting conditions for a <em>new</em> run. They are applied when the run
+                  is created and cannot change a run already in progress, so the button
+                  below resets and holds the new run paused. Each range is the bound the
+                  backend already validates.
+                </p>
+                <Slider
+                  label="Starting battery SOC"
+                  value={advanced.initial_soc_percent}
+                  min={5}
+                  max={95}
+                  step={1}
+                  unit="%"
+                  onCommit={(v) => setAdvanced((prev) => ({ ...prev, initial_soc_percent: v }))}
+                />
+                <Slider
+                  label="Starting spacecraft clock"
+                  value={advanced.initial_sim_time_s}
+                  min={0}
+                  max={5399}
+                  step={10}
+                  unit="s"
+                  hint="Where in the configured 60 min sunlight / 30 min eclipse cycle the run begins."
+                  onCommit={(v) => setAdvanced((prev) => ({ ...prev, initial_sim_time_s: v }))}
+                />
+                <Slider
+                  label="Starting payload temperature"
+                  value={advanced.initial_payload_temperature_c}
+                  min={-10}
+                  max={54}
+                  step={1}
+                  unit="°C"
+                  onCommit={(v) =>
+                    setAdvanced((prev) => ({ ...prev, initial_payload_temperature_c: v }))
+                  }
+                />
+                <div className="space-y-1">
+                  <label className="block text-xs text-ink-dim" htmlFor="advanced-mode">
+                    Operating mode
+                  </label>
+                  <select
+                    id="advanced-mode"
+                    value={advanced.mode}
+                    onChange={(e) => setAdvanced((prev) => ({ ...prev, mode: e.target.value }))}
+                    className="w-full rounded border border-edge-strong bg-panel-raised px-2 py-1.5 text-xs text-ink"
+                  >
+                    <option value="NOMINAL">NOMINAL</option>
+                    <option value="MANEUVER">MANEUVER</option>
+                  </select>
+                  <p className="text-[10px] text-ink-faint">
+                    MANEUVER widens the configured rate and pointing profiles by the
+                    vehicle&apos;s maneuver scale. It is a known command, not a fault, and it
+                    remains changeable during a run.
+                  </p>
+                </div>
+                <ControlButton
+                  label="Reset with these settings"
+                  onClick={() => void resetWithAdvanced()}
+                  busy={busy}
+                  tone="danger"
+                />
+              </div>
+            </details>
+
             <p className="mt-3 text-[10px] text-ink-faint">
               A reset starts a new run ID and clears chart buffers. Previous runs stay in the
               database.

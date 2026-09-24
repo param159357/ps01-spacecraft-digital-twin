@@ -254,6 +254,10 @@ export interface SimulatorConditions {
   contact_loss: boolean;
   branch_stuck_on: boolean;
   isolator_failed: boolean;
+  // The total number of resets that should have occurred in this run. The vehicle
+  // records one timestamped event per increment, so injecting a reset means raising
+  // this by exactly one; it never decreases within a run.
+  computer_resets: number;
   payload_duty_percent: number;
   heater_auto: boolean;
   valve_open: boolean;
@@ -268,6 +272,10 @@ export interface SimulatorTruthView {
   gas_mass_kg: number;
   heater_on: boolean;
   valve_open: boolean;
+  // Resets the vehicle has actually recorded, and when. These are the presenter's view
+  // of the same facts the flight console reads out of observed telemetry.
+  resets_applied: number;
+  reset_events_s: number[];
   hidden_conditions: Record<string, number | boolean>;
   known_commands: Record<string, unknown>;
 }

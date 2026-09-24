@@ -5,6 +5,145 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 9 — Simulator console: injected resets, a real frame counter, advanced reset settings
+
+**Date:** 2026-09-24
+**Scope:** simulator console only. No simulation equation, rule threshold, provider,
+authentication rule, proposal TTL or stored history was touched, and the D01–D04 presets
+are unchanged.
+
+### Automated checks
+
+| Check | Command | Result |
+|---|---|---|
+| Full backend suite | `pytest -q` | **182 passed**, 127.20 s |
+| New simulator-control tests | `pytest tests/test_phase9_simulator_controls.py` | 11 passed |
+| Lint | `ruff check app tests` | All checks passed |
+| Format | `ruff format --check` on the new test file | already formatted |
+| Types | `npx tsc --noEmit` | clean |
+| Production build | `npm run build` | 9 routes exported |
+| Migration drift | `alembic check` against the migrated `ps01` database | No new upgrade operations detected |
+| Compose | `docker compose --env-file … config -q` | exit 0 |
+
+No backend code changed, so no migration was needed. Everything the console now offers was
+already implemented and validated server side.
+
+### One click is one reset — proved, not assumed
+
+The vehicle applies **one timestamped event per increment of the commanded target**, one
+per tick. The button therefore reads the authoritative target at click time and raises it
+by exactly one. It does not write an incident, does not touch the counter, and does not use
+a separate endpoint.
+
+| Check | Evidence |
+|---|---|
+| One click, one event | Fresh run at 0 recorded → one click → `resets_applied: 1`, `reset_events_s: [18]` |
+| It does not keep firing | Four more seconds of ticks with the target unchanged: still `1`, still one event |
+| Polling creates nothing | 20 consecutive `GET /simulator/state` calls plus two seconds of ticks: `resets_applied: 0`, `reset_events_s: []` |
+| Two clicks, two distinct events | `reset_events_s: [18, 41]` — two different spacecraft times |
+| Two *rapid* clicks are not collapsed | Second click inside the same tick still raises the target: `(1, 2)`, two distinct events |
+| Bounds enforced | `computer_resets: 21` → 422; `-1` → 422 |
+| Operators cannot inject | `master`, `power`, `thermal`, `flight` all get 403 `ROLE_NOT_PERMITTED` |
+| A new run starts clean | After a reset: counter 0, events `[]`, target 0 |
+
+**The rapid-click test is the one that matters for the implementation choice.** Reverting
+the helper to increment `resets_applied` instead of the commanded target makes it fail with
+`assert (1, 1) == (1, 2)` — two clicks inside one second would have produced a single event.
+
+### The incident comes from the rule engine
+
+Two clicks in the browser, then read from the flight console:
+
+```
+RESET_RECURRENCE  WARNING  OPEN  53d0818e
+"2 distinct computer reset events within the last 900 s at spacecraft times 18, 41 s."
+```
+
+Exactly one incident, `subsystem: FLIGHT_SYSTEMS`, visible to `master` with the same id and
+absent from `power`'s list. Nothing in the console creates or hardcodes it.
+
+### The frame counter
+
+It read `run.frame_seq` — the run metadata's count, captured once with the snapshot and then
+never moved — so it sat at 0 for an entire demonstration. It now reads the newest received
+frame's own `frame_seq`, and shows an em dash when there is no valid frame, because frame 0
+is a real sequence number and must not stand in for "nothing yet".
+
+Observed in the browser: `—` after a reset with the run paused → `4` a few seconds after
+Resume → `7` three seconds later → `—` again after the next reset.
+
+### Advanced reset settings
+
+All four were checked against the backend before being exposed. Each is genuinely
+supported, with the bound the API already validates:
+
+| Control | Backend support | Range |
+|---|---|---|
+| Starting battery SOC | `RunCommand.initial_soc_percent` → `runner.reset` | 5–95 % |
+| Starting spacecraft clock | `RunCommand.initial_sim_time_s` | 0 – <5400 s |
+| Starting payload temperature | `RunCommand.initial_payload_temperature_c` | −10 – 54 °C |
+| Operating mode | `ConditionUpdate.mode`; `MANEUVER` scales the rate and pointing profiles by `maneuver_scale`, `SAFE` zeroes payload duty | NOMINAL / MANEUVER |
+
+Driven through the collapsed section in the browser — 33 %, 2400 s, 47 °C, MANEUVER — the
+new run reported exactly that: `energy_wh` 330 (33 % of the 1000 Wh fixture),
+`sim_time_s` 2400, `temperatures_c.payload` 47.0, `known_commands.mode` MANEUVER, status
+PAUSED, reset counter 0. The commanded mode also reached the flight console's frame context
+as `MANEUVER`.
+
+Mode is the one that is not a creation parameter — it is a known command — so the console
+commands it immediately after the new run exists. That is stated in the panel rather than
+implied, and mode remains changeable during a run, as it was before.
+
+### Presets and consoles still work
+
+All five preset buttons are present. D02 was run from the button and produced its
+documented labelled starting condition: 24 % SOC, 200 W extra load, payload duty 100 %,
+status RUNNING, reset counter 0 — so the advanced selections do not leak into a preset.
+
+| Console | Route | Channels | Frame | Incident scope |
+|---|---|---|---|---|
+| master | `/master/` | 28 | 21 | 1 visible, 0 hidden |
+| power | `/power/` | 20 | 21 | 1 visible, 0 hidden |
+| thermal | `/thermal/` | 20 | 21 | 0 visible, 1 hidden |
+| flight | `/flight/` | 22 | 21 | 0 visible, 1 hidden |
+
+Rendered and inspected: master shows its 13 panels, flight its 7 panels and 22-row channel
+table, thermal its 8 panels with the node-headroom table at 5 columns (correct — it is a
+different table) and the channel table aligned at 6 columns over 20 rows. A clean page load
+produced only 200 responses; the 401/403 entries in the console buffer were from this
+session's own role switching, and the refused `GET /simulator/state` calls are the role
+boundary working.
+
+### What was deliberately not done
+
+- **No telemetry channel was made editable.** All 28 remain calculated outputs. The
+  requirement said so and section 1.3 requires it: an operator console must not be able to
+  be handed a number that no model produced.
+- **No new backend endpoint or condition field.** The increment uses the existing
+  `POST /simulator/conditions`, which is why the reset travels the ordinary pipeline and the
+  rule has to do its own work.
+- **No `SAFE` mode option.** It is honoured by the twin, but choosing it as a *starting*
+  condition would begin the run with the payload already shed, which is a scenario rather
+  than a setting and overlaps D03. NOMINAL and MANEUVER are the two the requirement named.
+- **No seed field.** `RunCommand.seed` exists and is supported, but it was not among the
+  four controls asked for, and the presets already pin seeds where a scenario needs to
+  replay.
+
+### Known limitations
+
+- **A reset injected while the run is paused is queued, not recorded.** The target rises
+  immediately; the event appears on the next tick. The feedback line says so explicitly
+  when the run is not advancing.
+- **Twenty resets per run.** At the bound the button reports why instead of letting the
+  request fail validation. A reset clears the counter.
+- **The advanced sliders commit on release.** They follow the existing `Slider` component's
+  behaviour, so a value only reaches component state on mouse-up, touch-end or key-up.
+- **Advanced settings apply on reset only.** The panel resets and holds the new run paused;
+  it cannot retune a run in progress, which is the honest behaviour rather than a control
+  that silently does nothing.
+
+---
+
 ## Phase 9 — incident lifecycle rehydration across an API restart
 
 **Date:** 2026-09-24

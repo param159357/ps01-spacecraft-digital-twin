@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: incident lifecycle rehydration now continues the original incident across an API restart, verified against a real Uvicorn restart (both ids, first-seen times and acknowledgements preserved; one active row per deduplication key; a pre-existing duplicate reported and retained). 171 tests pass. Earlier: `RESET_RECURRENCE` implemented from observed telemetry only, coverage now 7 of 10 rules, and the Flight table rebuilt from server metadata. Earlier: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts; 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation passed at that point. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
+| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: the simulator console can inject one real computer reset per click (the rule engine still opens the incident), the frame readout tracks the newest received frame, and starting SOC/clock/payload temperature/mode are exposed as advanced reset settings. 182 tests pass. Earlier: incident lifecycle rehydration now continues the original incident across an API restart, verified against a real Uvicorn restart (both ids, first-seen times and acknowledgements preserved; one active row per deduplication key; a pre-existing duplicate reported and retained). 171 tests pass. Earlier: `RESET_RECURRENCE` implemented from observed telemetry only, coverage now 7 of 10 rules, and the Flight table rebuilt from server metadata. Earlier: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts; 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation passed at that point. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -919,6 +919,64 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-24 — Phase 9 (simulator console controls)
+
+- Status: IN_PROGRESS. Simulator console work complete and verified locally. Hosted
+  deployment and the physical five-laptop rehearsal remain pending. Phase 10 not started.
+- Implemented/files changed:
+  - `frontend/app/simulator/page.tsx` — an **Inject computer reset** button that reads the
+    commanded reset target from `GET /simulator/state` at click time and raises it by
+    exactly one through the existing `POST /simulator/conditions`. The vehicle records one
+    timestamped event per increment, so two clicks give two distinct events and the rule
+    engine opens `RESET_RECURRENCE` on its own — nothing here writes an incident or touches
+    the counter. The button disables itself and reads "Injecting…" while the request is in
+    flight, reports what it commanded and how many resets are recorded, and refuses at the
+    backend's bound of 20 with an explanation instead of a 422.
+  - Same file — the **Frame** readout now reads the newest received frame's own `frame_seq`
+    instead of the run metadata's count, which is captured with the snapshot and never
+    moves. With no valid frame it shows an em dash, because 0 is a real sequence number.
+  - Same file — a collapsed **Advanced reset settings** section for starting battery SOC,
+    starting spacecraft clock, starting payload temperature and operating mode. The first
+    three are existing validated `POST /simulator/run` parameters; mode is a known command,
+    so it is commanded immediately after the new run exists. The section resets and holds
+    the run paused, so these are visibly starting conditions.
+  - `frontend/lib/live.ts` — declared `computer_resets` on `SimulatorConditions` and
+    `resets_applied` / `reset_events_s` on `SimulatorTruthView`. The backend already
+    returned all three.
+  - `backend/tests/test_phase9_simulator_controls.py` — eleven tests driving the real API
+    and the real 1 Hz loop.
+- Checks actually run and results: **182 backend tests pass** in 127.20 s; the eleven new
+  tests pass; `ruff check` clean; `tsc --noEmit` clean; `npm run build` exported 9 routes;
+  `alembic check` clean (no backend code changed, so no migration); `docker compose config
+  -q` exit 0. In the browser: one click gave `resets_applied: 1` / `reset_events_s: [18]`
+  and stayed there through four more seconds of ticks; 20 state polls plus two seconds of
+  ticks created nothing; two clicks gave `[18, 41]` and the flight console showed exactly
+  one `RESET_RECURRENCE WARNING OPEN` citing both times, visible to master and absent from
+  power; the Frame readout went `—` → 4 → 7 → `—` across a reset; the advanced section
+  produced a run at 33 % SOC, clock 2400 s, payload 47 °C, mode MANEUVER, held PAUSED, with
+  the mode reaching the flight console's frame context. All five presets are present and
+  D02 still loads 24 % SOC with 200 W extra load. All four operator consoles route
+  correctly with 28/20/20/22 channels on the same frame and correct incident scoping.
+- Decisions/deviations from this specification: the increment is taken from the commanded
+  target rather than the applied count, because two clicks inside one tick would otherwise
+  collapse into one event — there is a regression test for it. `SAFE` was left out of the
+  mode list because starting in SAFE means starting with the payload already shed, which is a
+  scenario rather than a setting. Recorded in `docs/decisions.md`.
+- Intentionally not implemented: no telemetry channel was made editable — all 28 remain
+  calculated outputs; no new endpoint or condition field; no seed field; no change to the
+  D01–D04 presets, simulation equations, rule thresholds, provider code, authentication,
+  proposal expiry or stored history.
+- Missing credentials or external checks: unchanged. `.env` was not read, printed, changed
+  or committed.
+- Known limitations: a reset injected while the run is paused is queued and recorded on the
+  next tick, which the feedback line states; the bound is 20 resets per run; the advanced
+  sliders commit on release, following the existing component; and the advanced settings
+  apply on reset only, so they cannot retune a run in progress.
+- Next exact task: deploy the accumulated commits to the hosted target and repeat the
+  hosted checks — D02, one real structured incident investigation and one history review in
+  `LLM` mode, public Caddy routes and HTTPS — then the remaining rehearsal. Stop after
+  Phase 9.
 
 ### 2026-09-24 — Phase 9 (incident lifecycle rehydration)
 
