@@ -5,6 +5,132 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 9 — Flight console: RESET_RECURRENCE and the role-filtered channel table
+
+**Date:** 2026-09-24
+**Scope:** the seventh implemented rule, the Flight channel table, and a visible
+investigation panel. No physics, secrets, Gemini provider logic or Phase 10 work.
+
+### Automated checks
+
+| Check | Command | Result |
+|---|---|---|
+| Full backend suite | `pytest -q` | **159 passed**, 93.75 s |
+| New rule tests | `pytest tests/test_phase9_reset_recurrence.py` | 9 passed |
+| Lint | `ruff check app tests` | All checks passed |
+| Format | `ruff format --check` on the four changed files | 4 files already formatted |
+| Types | `npx tsc --noEmit` | clean |
+| Static export | `npm run build` | 9 routes, 11 pages exported |
+| Migration drift | `alembic check` against the migrated `ps01` database | No new upgrade operations detected |
+
+`alembic check` against `ps01_test` reports "Target database is not up to date". That is a
+fixture artifact, not drift: the pytest fixture builds its schema with `create_all`, so the
+test database has no `alembic_version` row. The migrated database is the one that answers
+the question, and it is clean.
+
+### What the nine rule tests actually pin
+
+They build `TelemetryFrame` objects directly and never construct an `InjectedConditions`,
+so a rule that read hidden truth could not pass them:
+
+- the catalogue marks the rule implemented and assigns it to `FLIGHT_SYSTEMS`;
+- the event-time parser deduplicates, tolerates rubbish and accepts `None`;
+- one reset does not open an incident;
+- two distinct resets inside the window open exactly **one** incident, WARNING, OPEN;
+- the same timestamp reported twice counts once;
+- events older than the 900 s window stop counting;
+- a missing counter neither opens an incident nor resolves one — absent evidence is not
+  healthy evidence;
+- the incident resolves once the events age out and the healthy dwell elapses;
+- a frame carrying no injected conditions at all is enough to drive the rule.
+
+### Live detection through the real API
+
+Injecting `computer_resets: 2` on a fresh run:
+
+| Observed | Value |
+|---|---|
+| `computer_reset_count` | `2`, quality VALID |
+| `reset_events_s` (engineering detail) | `"4, 5"` |
+| Incident | `RESET_RECURRENCE WARNING OPEN` |
+| Evidence text | `2 distinct computer reset events within the last 900 s at spacecraft times 4, 5 s.` |
+| `hidden_from_this_role` for `flight` | `0` |
+| Master's view | same incident, `subsystem: FLIGHT_SYSTEMS` |
+
+### Restart behaviour — verified, with a limitation to state plainly
+
+The check: open the incident, let the run pass a 30-frame checkpoint, stop the API, start
+it again, resume, and look at what comes back.
+
+| Stage | Run | Observed telemetry | Incident |
+|---|---|---|---|
+| Before restart | `7aef2da8` RUNNING, frame 43, sim 43 s | count `2`, events `"4, 5"` | `94bb07b3` OPEN |
+| Immediately after restart | `7aef2da8` **PAUSED**, no frame yet | none published | none listed |
+| After resume | `7aef2da8` RUNNING, frame 64, sim 45 s | count `2`, events `"4, 5"` | `8689cac9` OPEN, same evidence text |
+
+**The observed event history does survive a restart honestly.** The reset counter and event
+times live in the run's private checkpoint, which the simulator restores in order to
+continue the simulation; the twin then re-publishes them as ordinary observed telemetry, and
+the rule re-detects from that frame alone. The rule never reads the checkpoint and never
+reads the hidden `computer_resets` injection.
+
+**What does not survive is incident identity.** The lifecycle cache is in-process, so the
+restart left `94bb07b3` in the database as OPEN with `last_seen_utc` frozen at the restart,
+and the resume opened `8689cac9` as a second row against the *same* run `7aef2da8`. One
+continuing condition therefore reads as two incidents across a restart. This is the
+in-process lifecycle rehydration that Phase 3 recorded as deferred; it affects every rule,
+not just this one, and it is not worked around by reading simulator truth.
+
+### Browser verification (signed in as `flight`, then `master`)
+
+| Item | Observed |
+|---|---|
+| Flight alert popup | Renders top-right: `RESET_RECURRENCE` / `FLIGHT_SYSTEMS · computer` / WARNING, with the evidence sentence and both buttons |
+| WARNING auto-dismiss | Confirmed — the card had cleared itself by the next screenshot, with the incident recorded in `sessionStorage` so it is not re-announced |
+| "View incident" | Selects the named incident in the INCIDENTS panel |
+| Panels present | ATTITUDE, BODY RATES, REACTION WHEEL, COMMUNICATION LINK, INCIDENTS, **AI INCIDENT INVESTIGATION**, COMPUTER HEALTH, FLIGHT SYSTEMS CHANNELS |
+| Investigation | "Investigate stored evidence" → `COMPLETED`, mode badge `TEMPLATE`, "Template fallback: provider not configured", one cited observation, missing evidence, next checks, evidence trail `get_incident_evidence → get_forecast_comparison` |
+| Channel table | 22 body rows, 6 header cells, 6 body cells per row — aligned |
+| Coverage column | Renders `PROFILE`, `RULE_ONLY`, `DERIVED` |
+| Master popup | The same flight-subsystem incident appears on the master console |
+
+The investigation ran as `TEMPLATE` because this machine's `.env` has `AI_ENABLED=false`
+with `LLM_PROVIDER`, `LLM_MODEL` and both key variables empty. **No live `LLM` result is
+claimed from this check.** What is verified is that a Flight incident reaches the
+investigation panel, the panel is a top-level panel rather than buried inside an incident
+detail, and the fallback is labelled as a fallback.
+
+### Expected no-contact versus real stale telemetry — both halves still distinct
+
+| Condition | `contact_expected` | `link_snr` | `packet_error_rate` | Incident |
+|---|---|---|---|---|
+| Reset to `sim_time_s=2400` (between passes) | `False` | `MISSING` — "No scheduled contact window; the high-rate link is not measured." | `MISSING` — "No packets attempted in the rolling window, so the error rate has no denominator." | **none** |
+| `contact_loss: true` inside a pass | `True` | — | — | `DATA_STALE CRITICAL OPEN` |
+
+In the table both unavailable channels render as an em dash, never as `0`. Attitude, rates
+and wheel rows keep their `PROFILE` coverage label; `computer_reset_count` and
+`packet_error_rate` read `RULE_ONLY`.
+
+### Known limitations after this work
+
+- **Incident identity does not survive an API restart** (measured above). One condition
+  becomes two rows within one run.
+- **`FLIGHT_PROFILE_DEVIATION` remains unimplemented**, so pointing, rates and wheel are
+  displayed and labelled `PROFILE` but not monitored. `PRESSURE_INCONSISTENCY` and
+  `SENSOR_INCONSISTENCY` are also still unimplemented. `/api/config/coverage` now reports
+  7 of 10 rules active.
+- **Flight has no recovery action and no forecast.** It can acknowledge and investigate.
+  Nothing was invented to give the console a button.
+- **No live `LLM` investigation on this machine.** The provider is not configured locally.
+- **`ruff format --check` reports 16 other files** that predate this task. They were left
+  alone rather than reformatted into an unrelated diff; the project's documented gate is
+  `ruff check`.
+- The four preceding console commits (`f2934d4`, `da6961f`, `f28e7cf`, `283e613`) changed
+  frontend and API surface only and were verified in the browser when each was made; their
+  details are in the commit messages and are not separately tabulated here.
+
+---
+
 ## Phase 9 — command-outcome timing defect, found and fixed
 
 **Date:** 2026-09-24

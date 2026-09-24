@@ -194,6 +194,7 @@ def test_coverage_endpoint_reports_what_actually_works(client):
         "THERMAL_LIMIT",
         "ACTUATOR_MISMATCH",
         "SUPPLY_SHORTAGE",
+        "RESET_RECURRENCE",
     }
     assert {action["id"] for action in body["actions"] if action["enabled"]} == {
         "REDUCE_PAYLOAD_POWER",

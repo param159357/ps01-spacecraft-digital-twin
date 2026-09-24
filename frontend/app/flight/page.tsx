@@ -1,7 +1,9 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import { AppShell, headerFromLive } from "@/components/AppShell";
 import { IncidentPanel } from "@/components/IncidentPanel";
+import { InvestigationPanel } from "@/components/InvestigationPanel";
 import { IncidentAlerts } from "@/components/IncidentAlerts";
 import { LiveChart } from "@/components/LiveChart";
 import { Panel, StatusBadge } from "@/components/primitives";
@@ -17,12 +19,17 @@ const LINK_CHANNELS = ["link_snr", "packet_error_rate", "telemetry_age", "comput
 
 export default function FlightConsole() {
   const { user, checking } = useRequireRole("FLIGHT_SYSTEMS");
+  const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
+  const onIncidentSelect = useCallback((id: string | null) => setSelectedIncident(id), []);
   const live = useLiveStream(CHART_CHANNELS);
   const { meta, freshness } = useChannelMeta();
 
   if (checking || !user) return null;
 
   const { frame, run, history } = live;
+  // From the server's role-filtered dictionary, so it cannot overstate what this
+  // account may read.
+  const permittedChannels = Object.keys(meta);
   const contactExpected = frame?.context.contact_expected ?? null;
   const engineering = frame?.engineering ?? {};
   const attempted = engineering.packets_attempted_window;
@@ -153,8 +160,16 @@ export default function FlightConsole() {
             </div>
           </Panel>
 
-          <div id="incident-panel"><IncidentPanel subsystemLabel="Flight systems" /></div>
+          <div id="incident-panel">
+            <IncidentPanel
+              subsystemLabel="Flight systems"
+              onSelect={onIncidentSelect}
+              showInvestigation={false}
+            />
+          </div>
         </div>
+
+        {selectedIncident ? <InvestigationPanel incidentId={selectedIncident} /> : null}
 
         <div className="grid gap-4 xl:grid-cols-3">
           <Panel title="Computer health" subtitle="Cumulative counter and timestamped events">
@@ -185,7 +200,8 @@ export default function FlightConsole() {
 
           <Panel
             title="Flight systems channels"
-            subtitle="Units, limits and quality"
+            subtitle="Every channel this console may read, in configuration order"
+            actions={<StatusBadge tone="accent">{permittedChannels.length} channels</StatusBadge>}
             className="xl:col-span-2"
           >
             <div className="max-h-[300px] overflow-auto">
@@ -196,12 +212,12 @@ export default function FlightConsole() {
                     <th className="py-1.5 pr-3 text-right font-medium">Value</th>
                     <th className="py-1.5 pr-3 font-medium">Unit</th>
                     <th className="py-1.5 pr-3 font-medium">Operating limits</th>
-                  <th className="py-1.5 pr-3 font-medium">Coverage</th>
+                    <th className="py-1.5 pr-3 font-medium">Coverage</th>
                     <th className="py-1.5 font-medium">Quality</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {[...ATTITUDE_CHANNELS, ...WHEEL_CHANNELS, ...LINK_CHANNELS].map((id) => (
+                  {permittedChannels.map((id) => (
                     <ChannelTableRow key={id} channelId={id} frame={frame} meta={meta} digits={3} />
                   ))}
                 </tbody>

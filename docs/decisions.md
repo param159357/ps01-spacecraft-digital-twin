@@ -5,6 +5,92 @@ Newest first within each phase.
 
 ---
 
+## Phase 9 — RESET_RECURRENCE reads engineering detail, not the injection
+
+The rule needs two things: how many resets have happened, and when. The counter is a
+channel, so that half is easy. The times are the awkward half — the simulator knows them
+exactly, and the temptation is to read `computer_resets` off the injected conditions.
+
+That would be a fabricated capability. Section 1.3 is explicit that detection receives
+observations and known commands and never hidden fault selectors, and a rule that reads the
+injection would "detect" a recurrence the ground could not actually see.
+
+So the rule reads `reset_events_s` out of the frame's engineering detail. That field is
+already published, already displayed on the Flight console, and derived from the same
+observation path as everything else. It arrives as a short comma-separated label rather than
+a list of floats, which is why the parser accepts a string — a slightly awkward input is a
+fair price for keeping the evidence boundary intact. The nine tests build frames directly
+and never construct an `InjectedConditions`, so the boundary is pinned rather than merely
+intended.
+
+Three smaller choices inside the rule:
+
+- **Distinct times, held in a set.** "Multiple distinct reset events" is the rule's own
+  wording in section 8.1. The same event is re-published on every subsequent frame, so
+  counting samples instead of events would open an incident from a single reset within two
+  seconds.
+- **Abstain when the counter is not VALID.** If the channel drops out, the rule neither
+  opens an incident nor advances a healthy dwell. Section 1.3 again: missing data is not
+  zero and not healthy. The test for this opens an incident first, then drops the counter
+  for longer than the dwell, and asserts the verdict stays OPEN.
+- **WARNING, not CRITICAL.** The configuration's `severity_default` is WARNING and nothing
+  in the fixture justifies more. Repeated resets deserve investigation, not an invented
+  severity.
+
+## Phase 9 — the Flight channel table is built from server metadata
+
+The table previously mapped three hardcoded arrays — attitude, wheel, link — which came to
+ten of the twenty-two channels this role may read. The other twelve were reachable through
+the API and shown nowhere, and the count was invisible, so nothing on the page contradicted
+the impression that ten was all there was.
+
+It now maps `Object.keys(meta)`, which is the role-filtered channel list the server already
+returns in configuration order, with the count in the panel badge. The three arrays remain
+for the grouped readout panels above, where the grouping is the point. This also means a
+channel added to `telemetry.yaml` appears on the console without a frontend edit, and a
+channel a role may *not* read cannot appear at all — the filtering stays on the server.
+
+## Phase 9 — the investigation panel was lifted out of the incident detail
+
+`IncidentPanel` nested `InvestigationPanel` inside the expanded incident detail, at the
+bottom, below the acknowledge row. On the Flight console that put the AI investigation
+several hundred pixels below the fold inside a box the operator had to open first — present
+in the DOM, effectively invisible in the room.
+
+`IncidentPanel` gained a `showInvestigation` prop, default `true` so the other specialist
+consoles are unchanged, and Flight passes `false` while rendering `InvestigationPanel` as
+its own top-level panel driven by the panel's `onSelect` callback. Only one of the two
+mounts, so the stored analysis is still polled once.
+
+## Phase 9 — what the Flight console deliberately does not get
+
+- **No `FLIGHT_PROFILE_DEVIATION`.** Implementing it means deciding when a seeded
+  deterministic profile counts as deviating from itself. Without a real attitude dynamics
+  model there is no physical basis for the threshold, and the rule would be a random-number
+  alarm. It stays `implemented: false` and `/api/config/coverage` says so.
+- **No attitude disturbance injection.** Same reason. A control the judges can move that
+  changes a number with no dynamics behind it is a prop, not a simulation.
+- **No forecast.** Section 1.2 permits labelled deterministic profiles for attitude, wheel
+  and link precisely because they are not physically modelled; a forecast line on top of one
+  would be a claim the model cannot support. The channels report their prediction coverage
+  as `PROFILE` or `RULE_ONLY` in the table's Coverage column.
+- **No recommendation panel.** Power and Thermal have one because an implemented action
+  exists in their scope. No action in `actions.yaml` addresses a computer reset, so a
+  recommendation control on Flight would offer a fix that does not exist. The console
+  acknowledges and investigates, and the incident panel says plainly that recovery is the
+  master's.
+
+## Phase 9 — restart duplicates an incident, and that was left alone
+
+The restart check found that one continuing condition becomes two OPEN rows within one run,
+because the lifecycle cache is in-process. Fixing it means rehydrating active incidents from
+the database at startup for every rule — worth doing, but it is not a Flight-console change
+and not what this task asked for. It is measured and recorded in the validation record
+instead of being patched over, and specifically it is not worked around by having the rule
+consult simulator truth, which would trade a visible limitation for an invisible lie.
+
+---
+
 ## Phase 9 — recovery outcome measured before the command, not after
 
 ### A sentinel of zero made a queued command judge itself

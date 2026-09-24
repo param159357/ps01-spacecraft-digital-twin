@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts. 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation pass. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
+| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: `RESET_RECURRENCE` implemented from observed telemetry only (159 tests pass, coverage now 7 of 10 rules) and the Flight table rebuilt from server metadata; restart duplicates an incident row, which is measured and recorded. Earlier: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts; 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation passed at that point. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -919,6 +919,63 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-24 — Phase 9 (Flight console)
+
+- Status: IN_PROGRESS. The Flight console work is complete and locally verified; the hosted
+  deployment and the physical five-laptop rehearsal remain pending. Phase 10 not started.
+- Implemented/files changed:
+  - `backend/app/monitoring/engine.py` — `RESET_RECURRENCE`, the seventh implemented rule.
+    It reads the observed `computer_reset_count` channel and the `reset_events_s` label in
+    engineering detail, counts *distinct* event times inside the configured window, and
+    abstains entirely while the counter is not VALID so missing data neither opens an
+    incident nor satisfies a healthy dwell. The hidden `computer_resets` injection is never
+    read.
+  - `backend/app/config/rules.yaml` — `RESET_RECURRENCE` `implemented: true`, `phase: 9`,
+    `window_s: 900`, `min_events: 2`. `rules-0.5.0`. Coverage is now 7 of 10 rules.
+  - `backend/tests/test_phase9_reset_recurrence.py` — nine tests that build frames directly
+    and never construct an `InjectedConditions`, so a rule reading truth could not pass.
+  - `backend/tests/test_config.py`, `test_auth.py` — the implemented-rule assertions now
+    include the new rule.
+  - `frontend/app/flight/page.tsx` — the channel table is built from the server's
+    role-filtered metadata instead of three hardcoded arrays, so all 22 permitted channels
+    appear in configuration order with the Coverage column and a channel-count badge; the
+    header was corrected to six cells to match.
+  - `frontend/components/IncidentPanel.tsx` — new `showInvestigation` prop (default `true`,
+    so the other specialists are unchanged). Flight passes `false` and renders
+    `InvestigationPanel` as its own top-level panel, driven by the panel's `onSelect`.
+- Checks actually run and results: **159 backend tests pass** in 93.75 s; the nine new rule
+  tests pass; `ruff check` clean and the four changed files already formatted; `tsc --noEmit`
+  clean; `npm run build` exported 9 routes; `alembic check` clean against the migrated
+  database. Through the real API, injecting two resets produced observed
+  `computer_reset_count: 2` with `reset_events_s: "4, 5"` and one
+  `RESET_RECURRENCE WARNING OPEN` incident reading "2 distinct computer reset events within
+  the last 900 s at spacecraft times 4, 5 s", visible to `flight` with
+  `hidden_from_this_role: 0` and to `master` as `FLIGHT_SYSTEMS`. In the browser the alert
+  popup rendered on both the Flight and the Master console, "View incident" selected it, the
+  22-row table was aligned at six columns with PROFILE/RULE_ONLY/DERIVED coverage, and the
+  AI investigation panel completed. Outside a scheduled pass, `link_snr` and
+  `packet_error_rate` reported MISSING with their own reasons and no incident opened; a
+  `contact_loss` injection inside a pass opened `DATA_STALE CRITICAL`.
+- Decisions/deviations from this specification: `FLIGHT_PROFILE_DEVIATION` stays
+  unimplemented, and Flight gets no forecast, no attitude-disturbance control and no
+  recommendation panel, because no action in `actions.yaml` addresses a computer reset and
+  the attitude channels are declared profiles rather than a dynamics model. Reasoning in
+  `docs/decisions.md`.
+- Missing credentials or external checks: this machine's `.env` has `AI_ENABLED=false` with
+  no provider or key, so the investigation was verified in `TEMPLATE` mode only. **No live
+  `LLM` result is claimed.** The hosted deployment still has the authorized Gemini key.
+- Known limitations: **incident identity does not survive an API restart.** The restart
+  check confirmed the observed reset history does survive — it is restored from the private
+  checkpoint and re-published as ordinary telemetry, and the rule re-detects from that frame
+  alone — but the in-process lifecycle cache does not, so one continuing condition left
+  `94bb07b3` OPEN and opened `8689cac9` as a second row against the same run. This is the
+  lifecycle rehydration deferred in Phase 3 and affects every rule. It was measured and
+  recorded rather than worked around by reading simulator truth.
+- Next exact task: deploy the accumulated commits (`06aee13` through this one) to the
+  hosted target and repeat the hosted checks — D02, one real structured incident
+  investigation and one history review in `LLM` mode, public Caddy routes and HTTPS — then
+  the remaining rehearsal. Stop after Phase 9.
 
 ### 2026-09-24 — Phase 9 (cross-run forecast correction)
 

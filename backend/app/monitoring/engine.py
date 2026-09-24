@@ -17,6 +17,25 @@ class _RuleState:
     healthy_since_sim_s: float | None = None
 
 
+def _distinct_event_times(raw: object) -> set[float]:
+    """Parse the observed reset-event times.
+
+    Published as a short comma-separated label in engineering detail, which is why this
+    accepts a string. A set is returned so a repeated timestamp counts once: "distinct
+    reset events" is the rule's own wording, and two samples of one event are not two
+    events.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return set()
+    times: set[float] = set()
+    for part in raw.split(","):
+        try:
+            times.add(float(part.strip()))
+        except ValueError:
+            continue
+    return times
+
+
 @dataclass
 class IncidentEngine:
     config: VehicleConfiguration
@@ -172,6 +191,48 @@ class IncidentEngine:
                         meta.unit,
                     )
                 )
+
+        # RESET_RECURRENCE (section 8.1): distinct reset events inside the configured
+        # window. Both inputs are observed: the cumulative counter is a channel, and the
+        # event times are published in the frame's engineering detail, which operators
+        # already read. The hidden `computer_resets` injection is never consulted — the
+        # rule must be derivable by a ground team from telemetry alone.
+        reset_rule = self.config.rules.by_id("RESET_RECURRENCE")
+        reset_params = reset_rule.params if reset_rule else {}
+        window_s = float(reset_params.get("window_s", 900.0))
+        min_events = int(reset_params.get("min_events", 2))
+        reset_count = frame.value_if_valid("computer_reset_count")
+        # A counter that is not VALID means the evidence is absent. Absent evidence is
+        # neither a reset nor a clean bill of health, so the rule abstains entirely
+        # rather than feeding a healthy sample into the dwell timer.
+        if isinstance(reset_count, (int, float)):
+            events = _distinct_event_times(frame.engineering.get("reset_events_s"))
+            recent = sorted(t for t in events if 0.0 <= frame.sim_time_s - t <= window_s)
+            bad = len(recent) >= min_events
+            if recent:
+                when = ", ".join(f"{t:.0f}" for t in recent)
+                detail = (
+                    f"{len(recent)} distinct computer reset events within the last "
+                    f"{window_s:.0f} s at spacecraft times {when} s."
+                )
+            else:
+                detail = "No reset events within the configured window."
+            signals.append(
+                (
+                    "RESET_RECURRENCE",
+                    "AVIONICS",
+                    "computer",
+                    Subsystem.FLIGHT_SYSTEMS,
+                    Severity.WARNING,
+                    bad,
+                    detail,
+                    "computer_reset_count",
+                    float(reset_count),
+                    self.config.telemetry.by_id("computer_reset_count").unit
+                    if self.config.telemetry.by_id("computer_reset_count")
+                    else None,
+                )
+            )
 
         changed: list[Incident] = []
         recovered = self._apply(

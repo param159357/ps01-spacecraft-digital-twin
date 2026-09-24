@@ -6,7 +6,7 @@
 #
 # All thresholds are starting test values for a fictional vehicle, not flight limits.
 
-config_version: "rules-0.4.0"
+config_version: "rules-0.5.0"
 
 defaults:
   healthy_dwell_s: 10.0        # missing data must never satisfy healthy dwell
@@ -121,8 +121,8 @@ rules:
     family: AVIONICS
     severity_default: WARNING
     subsystem: FLIGHT_SYSTEMS
-    implemented: false
-    phase: null
+    implemented: true
+    phase: 9
     description: Multiple distinct reset events within a configured window.
     params:
       window_s: 900.0

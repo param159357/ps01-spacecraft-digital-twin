@@ -52,8 +52,13 @@ const LIFECYCLE_TONE: Record<IncidentSummary["lifecycle"], StatusTone> = {
 export function IncidentPanel({
   subsystemLabel,
   onSelect,
+  showInvestigation = true,
 }: {
   subsystemLabel: string;
+  // A console may render the investigation as its own panel instead of nesting it
+  // here, where it is easy to miss. Only one of the two should mount, so that the
+  // stored result is polled once.
+  showInvestigation?: boolean;
   // Lets the console put other panels — a recommendation, for instance — on the same
   // incident the operator is reading, instead of guessing which one that is.
   onSelect?: (incidentId: string | null) => void;
@@ -234,7 +239,7 @@ export function IncidentPanel({
             Recovery commands are executed by the master console only. This console can
             acknowledge and investigate within its own subsystem.
           </p>
-          <InvestigationPanel incidentId={detail.id} />
+          {showInvestigation ? <InvestigationPanel incidentId={detail.id} /> : null}
         </div>
       ) : null}
     </Panel>

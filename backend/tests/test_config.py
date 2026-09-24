@@ -113,16 +113,18 @@ def test_rules_and_actions_report_honest_coverage(config):
         "THERMAL_LIMIT",
         "ACTUATOR_MISMATCH",
         "SUPPLY_SHORTAGE",
+        "RESET_RECURRENCE",
     )
     assert config.actions.enabled_ids == (
         "REDUCE_PAYLOAD_POWER",
         "ISOLATE_OPTIONAL_BRANCH",
     )
-    # Still unimplemented, and still declared as such.
+    # Still unimplemented, and still declared as such. FLIGHT_PROFILE_DEVIATION stays
+    # deliberately off: comparing a deterministic profile against its own profile is
+    # close to circular, and saying so is more honest than shipping it.
     for rule_id in (
         "PRESSURE_INCONSISTENCY",
         "FLIGHT_PROFILE_DEVIATION",
-        "RESET_RECURRENCE",
         "SENSOR_INCONSISTENCY",
     ):
         assert config.rules.by_id(rule_id).implemented is False
