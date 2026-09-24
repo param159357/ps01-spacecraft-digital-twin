@@ -9,11 +9,15 @@
  *
  * Deliberate behaviour:
  *   * Announces an incident once. A repeat only happens if its severity actually rises,
- *     which is a different operational event, not a refresh.
+ *     which is a different operational event, not a refresh. The record of what has been
+ *     announced lives in `sessionStorage`, so a page reload does not re-alarm an operator
+ *     about something they have already seen; closing the tab starts a fresh watch.
  *   * Reads `/incidents`, which the server already scopes by role. A power specialist
  *     therefore cannot be alerted about a flight incident; no filtering happens here.
  *   * Never blocks. It is a corner stack, capped, dismissible, and the live telemetry
  *     behind it stays visible and interactive.
+ *   * A WARNING clears itself after a short read; a CRITICAL stays until the operator
+ *     dismisses it or opens the incident. Severity decides how insistent the alert is.
  *   * Shows only what the incident record actually says. No invented urgency text.
  */
 
@@ -56,10 +60,46 @@ const SEVERITY_RANK: Record<Severity, number> = {
 
 const POLL_MS = 3000;
 const MAX_VISIBLE = 3;
+// A warning has been read by the time it has sat there this long. A critical has not.
+const WARNING_DISMISS_MS = 15000;
+const STORAGE_KEY = "ps01:incident-alerts:announced";
+
+/**
+ * What has already been announced, per browser tab.
+ *
+ * React state alone would re-alarm on every reload, which trains an operator to ignore
+ * the alert — the opposite of its purpose. `sessionStorage` is the right scope: it
+ * survives a refresh and ends with the tab, so a genuinely new session starts clean.
+ * Every access is guarded because private windows and blocked site data can throw.
+ */
+function loadAnnounced(): Map<string, number> {
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return new Map();
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return new Map();
+    return new Map(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number",
+      ),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function saveAnnounced(value: Map<string, number>): void {
+  try {
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(value)));
+  } catch {
+    // Storage unavailable. Deduplication then lasts only as long as this page view,
+    // which is still correct within it.
+  }
+}
 
 export function IncidentAlerts() {
   const [alerts, setAlerts] = useState<AlertIncident[]>([]);
-  // Highest severity already announced per incident id. Survives re-renders.
+  // Highest severity already announced per incident id, mirrored into sessionStorage.
   const announced = useRef<Map<string, number>>(new Map());
 
   const dismiss = useCallback((id: string) => {
@@ -69,6 +109,7 @@ export function IncidentAlerts() {
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    announced.current = loadAnnounced();
 
     async function poll() {
       try {
@@ -86,17 +127,23 @@ export function IncidentAlerts() {
             fresh.push(incident);
           }
         }
-        // Forget incidents the server no longer lists, so a reset run can alert again.
+        // Forget incidents the server no longer lists, so the record cannot grow without
+        // bound across a long session. Incident ids are UUIDs, so a later run never
+        // collides with a pruned one.
         for (const id of Array.from(announced.current.keys())) {
           if (!live.has(id)) announced.current.delete(id);
         }
-        if (fresh.length) {
-          setAlerts((current) => {
-            const byId = new Map(current.map((item) => [item.id, item]));
-            for (const item of fresh) byId.set(item.id, item);
-            return Array.from(byId.values()).slice(-MAX_VISIBLE);
-          });
-        }
+        saveAnnounced(announced.current);
+        setAlerts((current) => {
+          // Drop cards the server no longer lists. A reset starts a new run and retires
+          // the previous run's incidents, and a stale CRITICAL left in the corner would
+          // assert a condition that no longer exists.
+          const kept = current.filter((item) => live.has(item.id));
+          if (!fresh.length && kept.length === current.length) return current;
+          const byId = new Map(kept.map((item) => [item.id, item]));
+          for (const item of fresh) byId.set(item.id, item);
+          return Array.from(byId.values()).slice(-MAX_VISIBLE);
+        });
       } catch {
         // A dropped poll, an expired session or a paused backend must never break the
         // console. The incident panel and the live stream report their own state.
@@ -111,6 +158,17 @@ export function IncidentAlerts() {
       window.clearInterval(id);
     };
   }, []);
+
+  // A CRITICAL card is never timed out: it stays until the operator acts on it. Anything
+  // lower clears itself so the corner does not accumulate cards nobody closed.
+  useEffect(() => {
+    const timers = alerts
+      .filter((incident) => incident.severity !== "CRITICAL")
+      .map((incident) =>
+        window.setTimeout(() => dismiss(incident.id), WARNING_DISMISS_MS),
+      );
+    return () => timers.forEach((id) => window.clearTimeout(id));
+  }, [alerts, dismiss]);
 
   const acknowledge = useCallback(
     async (incidentId: string) => {
