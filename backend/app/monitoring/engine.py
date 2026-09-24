@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
@@ -56,6 +57,49 @@ class IncidentEngine:
             ),
             None,
         )
+
+    def adopt(self, incidents: Iterable[Incident]) -> int:
+        """Seed the lifecycle cache with stored active incidents after a restart.
+
+        This cache is what deduplication consults. Without it, a restart inside a run
+        leaves `_active` matching nothing, and the next frame opens a second incident for
+        a condition that never stopped — one real problem reading as two.
+
+        Rule state is deliberately *not* restored. The persistence and healthy-dwell
+        timers start fresh, so recovery has to be demonstrated by observations received
+        after the restart rather than inherited from a timer this process never ran. A
+        resolved incident is refused here as well as at the query, so a stale payload
+        cannot reanimate one.
+        """
+        adopted = 0
+        for incident in incidents:
+            if incident.is_active:
+                self.incidents[incident.id] = incident
+                adopted += 1
+        return adopted
+
+    def _break_streaks_without_evidence(
+        self, run_id: UUID, evaluated: set[tuple[str, str]]
+    ) -> None:
+        """A rule that received no valid evidence must not accrue healthy dwell.
+
+        A rule whose inputs are not VALID appends no signal, so `_apply` never runs for it
+        and its healthy-since timer is left untouched. Untouched is wrong: the dwell
+        measures elapsed simulated time from the *first* healthy sample, so a long dropout
+        followed by a single healthy frame would resolve an incident on the strength of
+        absent evidence. Section 1.3 is explicit that missing data is neither zero nor
+        healthy, so the streak is broken and the dwell has to be earned again from real
+        observations.
+        """
+        for incident in self.incidents.values():
+            if incident.run_id != run_id or not incident.is_active:
+                continue
+            key = (incident.family, incident.affected_entity)
+            if key in evaluated:
+                continue
+            state = self._states.get((run_id, *key))
+            if state is not None:
+                state.healthy_since_sim_s = None
 
     def evaluate(self, frame: TelemetryFrame, forecast_crossing: bool = False) -> list[Incident]:
         signals: list[
@@ -233,6 +277,11 @@ class IncidentEngine:
                     else None,
                 )
             )
+
+        # `DATA_STALE` is applied unconditionally below, so it always counts as evaluated.
+        evaluated: set[tuple[str, str]] = {("DATA_AVAILABILITY", "telemetry")}
+        evaluated.update((signal[1], signal[2]) for signal in signals)
+        self._break_streaks_without_evidence(frame.run_id, evaluated)
 
         changed: list[Incident] = []
         recovered = self._apply(

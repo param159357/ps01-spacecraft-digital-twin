@@ -28,8 +28,26 @@ from app.storage.db import engine
 logger = logging.getLogger("ps01")
 
 
+def _configure_logging() -> None:
+    """Give the application's own loggers somewhere to write.
+
+    Uvicorn configures only its own loggers, so until this existed every
+    `logger.info`/`logger.warning` in this application went nowhere — including the
+    startup lines below and the warning raised when a run is found holding two active
+    incidents for one deduplication key. A report nobody can read is not a report.
+    Uvicorn's loggers do not propagate to the root, so its output is not duplicated.
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s:    %(name)s: %(message)s",
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _configure_logging()
     settings = get_settings()
 
     # Fail fast on a malformed fixture: a bad constant must never reach a dashboard.

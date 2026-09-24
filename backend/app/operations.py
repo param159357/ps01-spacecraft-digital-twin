@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
+
 from app.config.loader import VehicleConfiguration
 from app.contracts.actions import (
     ActionProposal,
@@ -15,7 +17,7 @@ from app.contracts.actions import (
     CommandStatus,
     RecoveryOutcome,
 )
-from app.contracts.incidents import Acknowledgement, Incident
+from app.contracts.incidents import Acknowledgement, Incident, Lifecycle, Severity
 from app.contracts.telemetry import StreamEventType, TelemetryFrame
 from app.forecasts.engine import forecast
 from app.forecasts.estimator import ObservedStateEstimate, estimate_observed_state
@@ -24,6 +26,14 @@ from app.storage.db import session_scope
 from app.storage.models import CommandRow, ForecastRow, IncidentEventRow, IncidentRow
 
 logger = logging.getLogger(__name__)
+
+# Section 8.2 lifecycle states that are still live. A RESOLVED incident is history and is
+# never restored as active: a recurrence after resolution is a new, linked incident.
+ACTIVE_LIFECYCLES = (Lifecycle.PENDING.value, Lifecycle.OPEN.value, Lifecycle.RECOVERING.value)
+
+# Rehydration is attempted a bounded number of times per run. A database fault must not
+# turn into a query on every tick, and it must not stop deterministic monitoring either.
+MAX_REHYDRATE_ATTEMPTS = 3
 
 
 class OperationalService:
@@ -43,6 +53,14 @@ class OperationalService:
         # the command is still sitting in the queue.
         self._command_start_load: dict[UUID, tuple[int | None, float]] = {}
         self._latest_frame: TelemetryFrame | None = None
+        # Runs whose stored active incidents have been loaded into the engine by this
+        # process, and how many times that has been attempted.
+        self._rehydrated_runs: set[UUID] = set()
+        self._rehydrate_attempts: dict[UUID, int] = {}
+        # Active rows that already duplicated a deduplication key when a run was
+        # rehydrated: superseded incident id -> the canonical row it duplicates. Kept so
+        # the inconsistency can be reported rather than quietly repaired.
+        self.superseded_duplicates: dict[UUID, UUID] = {}
 
     async def process_staleness(self, sim_time_s: float) -> None:
         if self._latest_frame is None:
@@ -68,6 +86,10 @@ class OperationalService:
             self.latest_forecast = None
             self.latest_estimate = None
             self._last_forecast_frame = None
+        # Before this run is evaluated for the first time in this process, adopt whatever
+        # it already had open. Nothing else in the tick may run first: the whole point is
+        # that deduplication sees the existing incident before a rule can open a second.
+        await self._ensure_rehydrated(frame.run_id)
         self._latest_frame = frame
         estimate = estimate_observed_state(frame, self.config.spacecraft)
         self.latest_estimate = estimate
@@ -97,6 +119,154 @@ class OperationalService:
         failed = await asyncio.to_thread(self._observe_command_outcomes, frame)
         for incident_id in failed:
             await self._enqueue_safely(incident_id, "FAILED_RECOVERY")
+
+    async def _ensure_rehydrated(self, run_id: UUID) -> None:
+        """Load a run's stored active incidents into the engine, at most once per run.
+
+        The database read runs in a worker thread, because the caller is the 1 Hz loop
+        that also serves SSE, and any failure is logged and contained: deterministic
+        monitoring continues either way. Only stored incident rows are consulted — no
+        simulator truth, no hidden injections, no `private_checkpoint`.
+        """
+        if run_id in self._rehydrated_runs:
+            return
+        attempts = self._rehydrate_attempts.get(run_id, 0)
+        if attempts >= MAX_REHYDRATE_ATTEMPTS:
+            return
+        self._rehydrate_attempts[run_id] = attempts + 1
+        try:
+            adopted = await asyncio.to_thread(self._load_active_incidents, run_id)
+        except Exception:  # noqa: BLE001 - monitoring must survive a storage fault
+            logger.exception(
+                "could not load active incidents for run %s (attempt %d of %d); "
+                "deterministic monitoring continues, but a restart inside this run may "
+                "open a duplicate incident",
+                run_id,
+                attempts + 1,
+                MAX_REHYDRATE_ATTEMPTS,
+            )
+            return
+        self._rehydrated_runs.add(run_id)
+        if adopted:
+            logger.info("adopted %d active incident(s) for run %s after restart", adopted, run_id)
+
+    def _load_active_incidents(self, run_id: UUID) -> int:
+        """Read one run's active incidents and hand them to the engine.
+
+        Ordered by first sighting so that, if a deduplication key somehow already has more
+        than one active row, the canonical choice is deterministic and is the original
+        incident rather than whichever row the database happened to return first.
+        """
+        with session_scope() as db:
+            rows = (
+                db.execute(
+                    select(IncidentRow)
+                    .where(
+                        IncidentRow.run_id == run_id,
+                        IncidentRow.lifecycle.in_(ACTIVE_LIFECYCLES),
+                    )
+                    .order_by(IncidentRow.first_seen_utc, IncidentRow.id)
+                )
+                .scalars()
+                .all()
+            )
+            canonical: dict[tuple[str, str, str], Incident] = {}
+            for row in rows:
+                incident = self._incident_from_row(row)
+                if incident is None:
+                    continue
+                key = incident.dedup_key
+                first = canonical.get(key)
+                if first is None:
+                    canonical[key] = incident
+                    continue
+                # A pre-existing duplicate, from a restart before this fix existed. Its
+                # history is left exactly as it stands — an append-only note records that
+                # it duplicates the canonical row, and only the canonical row is adopted,
+                # so nothing further is opened against the same key.
+                self.superseded_duplicates[incident.id] = first.id
+                logger.warning(
+                    "run %s has %s active for the same key %s as %s; continuing %s and "
+                    "leaving the duplicate row in stored history",
+                    run_id,
+                    incident.id,
+                    key,
+                    first.id,
+                    first.id,
+                )
+                self._note_superseded(db, incident.id, first.id)
+            return self.incident_engine.adopt(canonical.values())
+
+    def _incident_from_row(self, row: IncidentRow) -> Incident | None:
+        """Rebuild the contract object from a stored row.
+
+        The JSON payload carries the parts a column cannot — timeline, evidence, source
+        frames, suspected causes — while the columns carry identity and the mutable state
+        that later writes keep current. They are written together, so they agree; the
+        columns win on the overlap so that a payload from an older revision of this code
+        cannot resurrect a severity or an acknowledgement that has since moved on.
+        `evidence_revision` is not part of the contract and stays on the row, so it
+        continues from where it was.
+
+        Identity comes from the primary key rather than from `evidence["id"]`, which is
+        the difference between continuing this row and writing over a different one. A
+        payload that names another incident is exactly what a duplicated row looks like.
+        """
+        try:
+            incident = Incident.model_validate(row.evidence)
+        except Exception:  # noqa: BLE001 - one unreadable row must not block the rest
+            logger.exception("stored incident %s could not be read back; skipping it", row.id)
+            return None
+        if incident.id != row.id:
+            logger.warning(
+                "stored incident row %s carries id %s in its payload; using the row's own "
+                "primary key as its identity",
+                row.id,
+                incident.id,
+            )
+        return incident.model_copy(
+            update={
+                "id": row.id,
+                "run_id": row.run_id,
+                "severity": Severity(row.severity),
+                "lifecycle": Lifecycle(row.lifecycle),
+                "last_seen_utc": row.last_seen_utc,
+                "acknowledgement": Acknowledgement(
+                    acknowledged=row.acknowledged,
+                    acknowledged_by=row.acknowledged_by,
+                    acknowledged_at_utc=row.acknowledged_at_utc,
+                ),
+            }
+        )
+
+    def _note_superseded(self, db: Any, duplicate_id: UUID, canonical_id: UUID) -> None:
+        """Record the duplication once, without altering the duplicate's own state."""
+        already = db.execute(
+            select(IncidentEventRow.id)
+            .where(
+                IncidentEventRow.incident_id == duplicate_id,
+                IncidentEventRow.kind == "DUPLICATE_SUPERSEDED",
+            )
+            .limit(1)
+        ).first()
+        if already is not None:
+            return
+        db.add(
+            IncidentEventRow(
+                incident_id=duplicate_id,
+                at_utc=datetime.now(UTC),
+                kind="DUPLICATE_SUPERSEDED",
+                detail=(
+                    f"This row duplicates incident {canonical_id}, which describes the same "
+                    "condition for the same run, family and affected entity. The earlier "
+                    "incident is the one being continued. This row is retained as stored "
+                    "history and its own fields are unchanged."
+                ),
+                severity=None,
+                lifecycle=None,
+                evidence_ids=[f"incident:{canonical_id}"],
+            )
+        )
 
     def list_incidents(self, run_id: UUID | None) -> list[Incident]:
         return sorted(

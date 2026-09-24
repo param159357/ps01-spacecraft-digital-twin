@@ -5,6 +5,147 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 9 — incident lifecycle rehydration across an API restart
+
+**Date:** 2026-09-24
+**Defect:** the engine's deduplication cache lives in the API process. A restart inside a
+run left it empty, so the next frame carrying a condition that had never stopped found no
+active incident for its key and opened a second one. One real problem read as two — in the
+console, in the history counts and in the investigation queue. Measured and recorded in the
+previous entry; fixed here.
+
+### Automated checks
+
+| Check | Command | Result |
+|---|---|---|
+| Full backend suite | `pytest -q` | **171 passed**, 132.62 s |
+| New rehydration tests | `pytest tests/test_phase9_rehydration.py` | 12 passed |
+| Lint | `ruff check app tests` | All checks passed |
+| Format | `ruff format --check` on the four changed files | already formatted |
+| Types | `npx tsc --noEmit` | clean |
+| Static export | `npm run build` | 9 routes |
+| Migration drift | `alembic check` against the migrated `ps01` database | No new upgrade operations detected |
+| Compose | `docker compose --env-file … config -q` | exit 0 |
+
+No schema change was needed: the whole incident payload was already stored in
+`incidents.evidence`, and `evidence_revision` already lived on the row.
+
+### The tests were checked against the unfixed code
+
+A regression test that passes either way proves nothing, so each half of the fix was
+reverted in turn and the suite re-run:
+
+| Fix disabled | Result |
+|---|---|
+| Rehydration (`_ensure_rehydrated` made a no-op) | **9 of 12 failed** |
+| Healthy-streak break only | **1 failed** — `test_missing_data_does_not_satisfy_the_healthy_dwell_after_a_restart` |
+| Identity taken from the row's primary key | **1 failed** — `test_identity_comes_from_the_primary_key_not_the_payload` |
+
+The two that pass with rehydration disabled are the ones asserting it does *not* overreach —
+a resolved incident is not reanimated, and another run's incidents are not imported. They
+are guards against a future over-eager implementation, not evidence of this one.
+
+### A bug in the fix, found by the real-server check and not by the tests
+
+The first implementation rebuilt the incident with `Incident.model_validate(row.evidence)`
+and took its `id` from the payload. In normal operation the payload's `id` and the row's
+primary key agree, so every test passed. On the real server, with a duplicated row whose
+`evidence` JSON had been copied intact, the duplicate report named one incident as both the
+duplicate *and* the canonical row:
+
+```
+WARNING: run 3f9a9228… has 1b349787… active for the same key ('…','AVIONICS','computer')
+         as 1b349787…; continuing 1b349787…
+```
+
+Identity now comes from `row.id` and `row.run_id`, with a warning when the payload
+disagrees. Without that, a later write would have gone to the wrong row.
+
+### Real Uvicorn restart
+
+A run was driven to hold two incidents in different subsystems, both acknowledged by the
+master, then the API process was stopped and started again.
+
+| Stage | Master sees | Power sees |
+|---|---|---|
+| Before restart | `RESET_RECURRENCE` `e7803bfd` OPEN ack=true (first seen 04:46:58); `GENERATION_SHORTFALL` `67bbe2a3` OPEN ack=true (04:47:38) | `67bbe2a3` only |
+| Immediately after restart | run **PAUSED**, no frame, no incidents listed | same |
+| After resume | `e7803bfd` OPEN ack=true 04:46:58; `67bbe2a3` OPEN ack=true 04:47:38 | `67bbe2a3` only |
+
+Both incidents kept their id, their `first_seen_utc` and their acknowledgement. Requirement
+by requirement: identity, first/last seen, severity, lifecycle, acknowledgement, evidence,
+timeline and deduplication key all carried; `evidence_revision` continued at 1 rather than
+resetting to 0; role scoping was unchanged; and the database held exactly one active row
+per deduplication key.
+
+Startup log after the restart:
+
+```
+INFO:  ps01.runner: recovered run c214204b… at tick 180 (paused)
+INFO:  app.operations: adopted 2 active incident(s) for run c214204b… after restart
+```
+
+### A pre-existing duplicate
+
+A second active `AVIONICS` row was inserted directly, exactly as a restart before this fix
+would have left the database, and the API restarted again.
+
+| Row | Lifecycle | Acknowledged | `evidence_revision` | In the engine? |
+|---|---|---|---|---|
+| `e7803bfd` (earliest first seen) | OPEN | true | 1 | yes — continued |
+| `7d7cbe27` (the duplicate) | OPEN | false | 0 | no |
+
+Its own fields are untouched — nothing was deleted, closed or rewritten — and an
+append-only `DUPLICATE_SUPERSEDED` timeline row records what it duplicates, citing
+`incident:e7803bfd…`. The warning names both rows correctly. Restarting three times writes
+the note once. The canonical choice is the earliest `first_seen_utc`, tie-broken by id, so
+it is deterministic and is the original incident rather than whichever row the database
+returned first.
+
+### Application logging had to be fixed for any of that to be readable
+
+`logging.getLogger("ps01")` and the module loggers had no handler: uvicorn configures only
+its own loggers, so every `logger.info`/`logger.warning` in this application went nowhere,
+including the pre-existing `configuration loaded` and `database reachable` startup lines. A
+requirement to report an inconsistency is not met by a log line that is discarded, so the
+lifespan now installs a root handler when nothing else has. Uvicorn's loggers do not
+propagate to the root, so its access log is not duplicated. The log excerpts above are from
+after that change.
+
+### Browser check (master console, after the restart, with the duplicate row present)
+
+`GET /api/incidents` returned 2 incidents across 2 distinct deduplication keys with
+`hidden_from_this_role: 0`. The console rendered exactly two alert cards and one row per
+incident in ACTIVE INCIDENTS — no duplicate for the `AVIONICS` key, although the database
+still holds the duplicate row. Both showed as acknowledged, so neither card offered
+Acknowledge again.
+
+### Known limitations after this work
+
+- **A pre-existing duplicate row stays in stored history and stays active.** Only the
+  canonical row is adopted, so no console or API response shows a duplicate, but
+  `GET /history/summary` counts distinct stored incidents and will still count both. That
+  is deliberate: the rows genuinely were opened, and rewriting their lifecycle to tidy a
+  count is editing history. The report is the warning plus
+  `OperationalService.superseded_duplicates`.
+- **Rehydration is per run, on that run's first frame.** A run that never publishes a frame
+  after the restart is never rehydrated, which is correct — there is nothing to evaluate —
+  but it means the incident list is empty while the restored run sits PAUSED, until the
+  simulator resumes it.
+- **Rule timers are not restored, by design.** A healthy-dwell period that was nearly
+  complete before a restart starts again from zero, so an incident can sit RECOVERING for
+  one dwell longer than it otherwise would have.
+- **Three attempts, then it gives up.** If the database is unreachable for a run's first
+  three frames, rehydration stops trying for that run and logs why. Monitoring continues,
+  and a restart in that window could still duplicate an incident.
+- **Proposals are still not persisted.** A restart loses in-flight comparisons and the
+  operator compares again; that remains out of scope here.
+- **`process_staleness` returns early when no frame has arrived**, so a restart during a
+  contact loss evaluates no staleness until contact resumes. Pre-existing behaviour,
+  unchanged by this work, and noted because the restart check walked past it.
+
+---
+
 ## Phase 9 — Flight console: RESET_RECURRENCE and the role-filtered channel table
 
 **Date:** 2026-09-24

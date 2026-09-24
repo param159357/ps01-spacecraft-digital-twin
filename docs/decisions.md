@@ -5,6 +5,106 @@ Newest first within each phase.
 
 ---
 
+## Phase 9 — rehydration happens on a run's first frame, not at startup
+
+The obvious place to reload active incidents is the lifespan. It is the wrong place. At
+startup the restored run is PAUSED and no frame has been published, so the process does not
+yet know which run will actually resume — and if the simulator resets instead of resuming,
+anything loaded at startup would belong to a run that no longer matters.
+
+`process_frame` already knows the run id of the frame it is about to evaluate, and it is the
+only code path where a missing cache entry can do harm. So the load happens there, once per
+run, immediately before the engine is called. A per-run set records what has been loaded, so
+a reset mid-process rehydrates the new run without re-reading the old one.
+
+The read runs through `asyncio.to_thread`, because the caller is the 1 Hz loop that also
+serves SSE, and it is attempted at most three times per run. A database fault must not become
+a query on every tick, and it must not stop deterministic monitoring either: the exception is
+logged with its attempt number and the tick carries on, so rules still evaluate from observed
+telemetry and an operator still gets warnings. The cost of giving up is stated in the log
+line — a restart in that window may open a duplicate.
+
+## Phase 9 — the row's primary key is the incident's identity
+
+The first version of this rebuilt each incident with `Incident.model_validate(row.evidence)`
+and let the payload supply the `id`. Every test passed, because `_persist_incident` writes
+the payload keyed by the incident it came from, so the two always agree in normal operation.
+
+They do not agree for a row that was copied. The real-server check inserted a duplicate by
+cloning a row with its `evidence` JSON intact, and the duplicate report then named one
+incident as both the duplicate and the canonical row — and a later write would have gone to
+the wrong row entirely.
+
+Identity now comes from `row.id` and `row.run_id`, and a payload that disagrees is logged.
+The same reasoning applies to the rest of the overlap: severity, lifecycle, `last_seen_utc`
+and acknowledgement are taken from the columns, because those are what later writes keep
+current and a payload written by an older revision of this code must not resurrect a state
+that has since moved on. The payload supplies only what no column carries — timeline,
+evidence, source frames, suspected causes.
+
+## Phase 9 — rule timers are deliberately not restored
+
+Rehydration seeds `IncidentEngine.incidents` and nothing else. `_RuleState`, which holds the
+persistence and healthy-dwell timers, starts empty.
+
+That is a choice, not an omission. Restoring a dwell timer would mean resolving an incident
+partly on the strength of observations a previous process saw and this one cannot check. The
+first healthy frame after a restart therefore begins a new dwell and reports RECOVERING; the
+incident resolves only once a full dwell of observations has arrived since the restart. It
+costs one dwell of extra caution and it means recovery is always demonstrated by evidence
+this process actually received.
+
+## Phase 9 — missing data can no longer run down the dwell clock
+
+Fixing rehydration exposed a second problem in the same area. A rule whose inputs are not
+VALID appends no signal, so `_apply` never runs for it and its healthy-since timer is left
+untouched. Untouched is wrong: the dwell is measured as elapsed simulated time from the
+*first* healthy sample, so a long dropout followed by a single healthy frame would resolve an
+incident having counted the entire gap as healthy. Section 1.3 says missing data is neither
+zero nor healthy, and that includes not being healthy for the purposes of a dwell.
+
+`evaluate` now collects the `(family, entity)` keys it actually had evidence for and breaks
+the healthy streak of any active incident whose key is not among them. The dwell has to be
+earned again from real observations. `DATA_STALE` is applied unconditionally on that path, so
+it always counts as evaluated.
+
+This was implemented rather than deferred because requirement 8 names it, and because the
+existing test for it only passed by accident of ordering: the dropout happened while the
+timer was already `None`.
+
+## Phase 9 — a pre-existing duplicate is reported, not repaired
+
+A run that restarted before this fix can hold two active rows for one deduplication key.
+Three options were available: delete the extra row, close it, or leave it.
+
+Deleting is out — it is stored evidence of something that really happened, and the
+instruction was explicitly not to delete history. Closing it is a milder version of the same
+thing: rewriting a lifecycle to make a count look tidier is still editing a record on the
+strength of an inference. So the row is left exactly as it stands, with an append-only
+`DUPLICATE_SUPERSEDED` timeline entry citing the canonical incident, a warning naming both
+rows, and an entry in `OperationalService.superseded_duplicates`.
+
+The consequence is stated plainly in the validation record: no console or API response shows
+a duplicate, because only the canonical row is adopted, but `GET /history/summary` counts
+distinct stored incidents and will still count both. The canonical choice is the earliest
+`first_seen_utc`, tie-broken by id — deterministic, and the original incident rather than
+whichever row the database happened to return first.
+
+## Phase 9 — the application had no log output at all
+
+While checking the duplicate warning on a real server it turned out that nothing the
+application logs was reaching a handler. Uvicorn configures only its own loggers, so
+`logging.getLogger("ps01")` and every module logger wrote into the void — including the
+pre-existing `configuration loaded` and `database reachable` startup lines, which had been
+invisible since Phase 1.
+
+A requirement to report an inconsistency is not satisfied by a log line that is discarded, so
+the lifespan installs a root handler when nothing else has. `basicConfig` is a no-op if the
+root logger already has handlers, so a host that configures logging itself is not overridden,
+and uvicorn's own loggers do not propagate to the root, so its access log is not duplicated.
+
+---
+
 ## Phase 9 — RESET_RECURRENCE reads engineering detail, not the injection
 
 The rule needs two things: how many resets have happened, and when. The counter is a

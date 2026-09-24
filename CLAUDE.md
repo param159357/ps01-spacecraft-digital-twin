@@ -904,7 +904,7 @@ This delivered specification does not inspect or assert implementation status in
 | 6 | COMPLETE | `docs/validation.md` Phase 6 and the Phase 6/7 review: 116 backend tests pass; cached June dataset has 43,200 minute buckets, 900 selected 1 Hz frames and five distinct recurring incidents; independently re-driven through a real server with 100% coverage, correct window rejection and zero hidden-field hits. History was found not to be role-scoped and is now scoped like `GET /incidents`. | Phase 6 done |
 | 7 | COMPLETE | `docs/validation.md` Phase 7 and the Phase 6/7 review: one-worker queue, revision cache, cooldown/budget/queue limits and all fallback cases verified; a real API run gave a cited `TEMPLATE` investigation with zero hidden-field hits. The investigation enqueue was found to run blocking I/O on the event loop unguarded and now runs in a worker thread with its exceptions contained. Provider code is implemented but a live LLM call was not run because no authorized key is configured. | Phase 7 done; Phase 8 integration checks |
 | 8 | COMPLETE | `docs/validation.md` Phase 8: 124 backend tests pass, ruff/tsc/export/alembic clean; every section 13.2 item mapped to a test or a live check; five concurrent SSE clients shared one run and frames 1–12; late joiner got the current snapshot; reset reached all clients; D02 gave IMPROVED 379.7 → 300.2 W with a 409 on an expired proposal; consoles reviewed at both target sizes. Two defects found and fixed: unimplemented thermal hysteresis, and a stale "Phase 4" placeholder on the master console | Phase 8 done; Phase 9 deployment and rehearsal |
-| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: `RESET_RECURRENCE` implemented from observed telemetry only (159 tests pass, coverage now 7 of 10 rules) and the Flight table rebuilt from server metadata; restart duplicates an incident row, which is measured and recorded. Earlier: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts; 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation passed at that point. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
+| 9 | IN_PROGRESS | `docs/validation.md` Phase 9: incident lifecycle rehydration now continues the original incident across an API restart, verified against a real Uvicorn restart (both ids, first-seen times and acknowledgements preserved; one active row per deduplication key; a pre-existing duplicate reported and retained). 171 tests pass. Earlier: `RESET_RECURRENCE` implemented from observed telemetry only, coverage now 7 of 10 rules, and the Flight table rebuilt from server metadata. Earlier: Google Cloud exposed Gemini schema/export-path defects and a cross-run stale forecast. Gemini now receives minimal inline schemas; `.next-export` is mounted directly; live estimate/forecast caches reset on run change and the API rejects cross-run forecasts; 133 backend tests, Ruff, TypeScript, export, Alembic and Compose validation passed at that point. | Redeploy the latest corrections; verify hosted D02 and real incident/history `LLM` results, public Caddy routes/HTTPS, and the remaining rehearsal. Physical five-laptop rehearsal remains pending. |
 | 10 | NOT_STARTED | Optional | Evaluate ML only after core works |
 
 Append compact session entries:
@@ -919,6 +919,68 @@ Append compact session entries:
 - Known limitations:
 - Next exact task:
 ```
+
+### 2026-09-24 — Phase 9 (incident lifecycle rehydration)
+
+- Status: IN_PROGRESS. The restart-duplication defect recorded in the previous entry is
+  fixed and verified against a real Uvicorn restart. Hosted deployment and the physical
+  five-laptop rehearsal remain pending. Phase 10 not started.
+- Implemented/files changed:
+  - `backend/app/operations.py` — before a run is evaluated for the first time in this
+    process, its stored active incidents are loaded into the engine. Only `PENDING`, `OPEN`
+    and `RECOVERING` rows are adopted; the query is filtered by run id, ordered by first
+    sighting, run in a worker thread and attempted at most three times, with any failure
+    logged and contained so deterministic monitoring continues. Identity comes from the
+    row's primary key, not from `evidence["id"]`. Severity, lifecycle, `last_seen_utc` and
+    acknowledgement come from the columns; the payload supplies timeline, evidence and
+    source frames. `evidence_revision` stays on the row and continues from where it was.
+  - `backend/app/monitoring/engine.py` — `adopt()` seeds the deduplication cache and
+    refuses a resolved incident. `_break_streaks_without_evidence()` clears the
+    healthy-since timer of any active incident whose rule received no valid evidence this
+    frame, so a dropout can no longer run down the dwell clock.
+  - `backend/app/main.py` — the lifespan installs a root log handler when nothing else has.
+    Uvicorn configures only its own loggers, so until now every application log line was
+    discarded, including the startup lines written since Phase 1. The duplicate report
+    depends on being readable.
+  - `backend/tests/test_phase9_rehydration.py` — twelve tests driving real
+    `OperationalService` instances against the database, with a restart simulated as a new
+    service object pointed at the same run.
+- Checks actually run and results: **171 backend tests pass** in 132.62 s; the twelve new
+  tests pass; `ruff check` clean and the changed files already formatted; `tsc --noEmit`
+  clean; `npm run build` exported 9 routes; `alembic check` clean (no schema change was
+  needed); `docker compose config -q` exit 0. Each half of the fix was reverted in turn to
+  confirm the tests fail without it: 9 of 12 fail without rehydration, one specific test
+  fails without the streak break, one without the primary-key identity.
+  Through a real Uvicorn restart: a run holding `RESET_RECURRENCE e7803bfd` and
+  `GENERATION_SHORTFALL 67bbe2a3`, both acknowledged by the master, came back PAUSED with
+  no incidents listed, and on resume continued **both original ids** with their original
+  `first_seen_utc`, `acknowledged=true` and `evidence_revision` at 1 rather than 0. The
+  database held exactly one active row per deduplication key, role scoping was unchanged,
+  and the log read `adopted 2 active incident(s) … after restart`. With a duplicate
+  `AVIONICS` row inserted as a pre-fix restart would have left it, the earliest row was
+  continued, the duplicate was left untouched at revision 0 with an append-only
+  `DUPLICATE_SUPERSEDED` timeline entry citing the canonical incident, and the master
+  console rendered one card and one list row per key.
+- Defect found in my own fix, by the real-server check and not by the tests: identity was
+  being taken from the stored JSON payload, which agrees with the primary key in normal
+  operation but not for a copied row — the duplicate report named one incident as both the
+  duplicate and the canonical row. Fixed, and pinned by its own regression test.
+- Decisions/deviations from this specification: rule timers are deliberately not restored,
+  so recovery is demonstrated by observations received after the restart; a pre-existing
+  duplicate row is reported and left in stored history rather than deleted or closed,
+  because rewriting a lifecycle to tidy a count is still editing a record. Both recorded in
+  `docs/decisions.md`.
+- Missing credentials or external checks: unchanged — this machine's `.env` has
+  `AI_ENABLED=false` and no provider key, so `LLM` mode is still unvalidated here.
+- Known limitations: a pre-existing duplicate still counts twice in
+  `GET /history/summary`, because the rows genuinely were opened; rehydration gives up after
+  three failed attempts for a run and says so in the log; a nearly complete healthy dwell
+  restarts from zero after a restart; proposals are still not persisted; and
+  `process_staleness` returns early until a frame arrives, so a restart during a contact
+  loss evaluates no staleness until contact resumes.
+- Next exact task: deploy the accumulated commits to the hosted target and repeat the hosted
+  checks — D02, one real structured incident investigation and one history review in `LLM`
+  mode, public Caddy routes and HTTPS — then the remaining rehearsal. Stop after Phase 9.
 
 ### 2026-09-24 — Phase 9 (Flight console)
 
