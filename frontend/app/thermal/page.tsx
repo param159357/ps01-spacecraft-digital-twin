@@ -1,11 +1,14 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import { AppShell, headerFromLive } from "@/components/AppShell";
 import { IncidentPanel } from "@/components/IncidentPanel";
 import { IncidentAlerts } from "@/components/IncidentAlerts";
 import { LiveChart } from "@/components/LiveChart";
 import { Panel, StatusBadge } from "@/components/primitives";
 import { ChannelReadout, ChannelTableRow, useChannelMeta } from "@/components/telemetry";
+import { NodeHeadroom } from "@/components/NodeHeadroom";
+import { SpecialistRecommendation } from "@/components/SpecialistRecommendation";
 import { useRequireRole } from "@/lib/auth";
 import { freshnessTone, useLiveStream } from "@/lib/live";
 
@@ -33,10 +36,15 @@ export default function ThermalConsole() {
   const { user, checking } = useRequireRole("THERMAL_PROPULSION");
   const live = useLiveStream(CHART_CHANNELS);
   const { meta, freshness } = useChannelMeta();
+  const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
+  const onIncidentSelect = useCallback((id: string | null) => setSelectedIncident(id), []);
 
   if (checking || !user) return null;
 
   const { frame, run, history } = live;
+  // Built from the server's role-filtered dictionary so it cannot claim more than
+  // this account may read.
+  const permittedChannels = Object.keys(meta);
   const commandedHeater = frame?.context.known_commands?.heater_commanded_on;
   const observedHeater = frame?.values.heater_power;
   // Commanded state and observed activity are shown side by side on purpose: that
@@ -103,8 +111,9 @@ export default function ThermalConsole() {
               showLimits={false}
             />
             <p className="mt-1 text-[10px] text-ink-faint">
-              Limit lines are omitted here because the four nodes have different limits;
-              per-node limits appear in the channel table below and on each readout.
+              No limit line is drawn across this chart: the nodes have different limits,
+              so one line would be wrong for most of them. Per-node margins are in the
+              panel below.
             </p>
           </Panel>
 
@@ -137,9 +146,12 @@ export default function ThermalConsole() {
               />
               {heaterMismatch ? (
                 <p className="text-[10px] text-warning">
-                  Observed heater power disagrees with the commanded thermostat state. A
-                  detection rule for this arrives in Phase 5; this panel reports the
-                  discrepancy, it does not diagnose a cause.
+                  Observed heater power disagrees with the commanded thermostat state.
+                  The <span className="tnum">ACTUATOR_MISMATCH</span> rule is active and
+                  will open an incident once the discrepancy persists beyond its
+                  configured response allowance. Neither this panel nor that rule claims
+                  to know whether the actuator, its sensor or the command path is at
+                  fault.
                 </p>
               ) : (
                 <p className="text-[10px] text-ink-faint">
@@ -150,6 +162,13 @@ export default function ThermalConsole() {
             </div>
           </Panel>
         </div>
+
+        <Panel
+          title="Headroom to each node's own limit"
+          subtitle="Distance to the nearer configured bound, in that node's own degrees"
+        >
+          <NodeHeadroom channelIds={NODE_CHANNELS} frame={frame} meta={meta} />
+        </Panel>
 
         <div className="grid gap-4 xl:grid-cols-3">
           <Panel
@@ -176,15 +195,30 @@ export default function ThermalConsole() {
               Propellant mass is <em>derived</em> from the observed pressure and
               temperature, not weighed — so a falling mass estimate is not independent
               confirmation that gas left the tank. A pressure fall caused by cooling is
-              not by itself a leak. No propulsion recovery command is enabled, because its
-              prerequisites are not modelled.
+              not by itself a leak. <strong>No pressure-fault rule is implemented</strong>:
+              <span className="tnum">PRESSURE_INCONSISTENCY</span> is declared in the rule
+              catalogue but does not run, so nothing here will raise an incident about the
+              gas store. <strong>No propulsion recovery action is enabled</strong> either,
+              because its prerequisites are not modelled. This subsystem is observable and
+              commandable, not yet diagnosable.
             </p>
           </Panel>
 
-          <div id="incident-panel"><IncidentPanel subsystemLabel="Thermal / propulsion" /></div>
+          <div id="incident-panel">
+            <IncidentPanel subsystemLabel="Thermal / propulsion" onSelect={onIncidentSelect} />
+          </div>
         </div>
 
-        <Panel title="Thermal and propulsion channels" subtitle="Units, limits and quality">
+        <SpecialistRecommendation
+          incidentId={selectedIncident}
+          subsystemLabel="Thermal / propulsion"
+        />
+
+        <Panel
+          title="Thermal and propulsion channels"
+          subtitle="Every channel this console may read, in configuration order"
+          actions={<StatusBadge tone="accent">{permittedChannels.length} channels</StatusBadge>}
+        >
           <div className="max-h-[360px] overflow-auto">
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-panel">
@@ -193,11 +227,12 @@ export default function ThermalConsole() {
                   <th className="py-1.5 pr-3 text-right font-medium">Value</th>
                   <th className="py-1.5 pr-3 font-medium">Unit</th>
                   <th className="py-1.5 pr-3 font-medium">Operating limits</th>
+                  <th className="py-1.5 pr-3 font-medium">Coverage</th>
                   <th className="py-1.5 font-medium">Quality</th>
                 </tr>
               </thead>
               <tbody>
-                {[...NODE_CHANNELS, "heater_power", ...PROPULSION_CHANNELS].map((id) => (
+                {permittedChannels.map((id) => (
                   <ChannelTableRow key={id} channelId={id} frame={frame} meta={meta} />
                 ))}
               </tbody>

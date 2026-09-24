@@ -160,7 +160,9 @@ def step(
         + branch_w * branch.heat_fraction_to_payload,
         "tank": float(getattr(nodes["tank"], "nominal_w", 2.0)),
         "thruster": (
-            float(getattr(nodes["thruster"], "valve_open_w", 6.0)) if truth.valve_open else 0.0
+            float(getattr(nodes["thruster"], "valve_open_w", 6.0))
+            if conditions.valve_open
+            else 0.0
         ),
     }
 
@@ -168,7 +170,7 @@ def step(
         config.thermal, truth.temperatures_c, heat_inputs, env.boundary_c, dt_s
     )
     next_gas_kg = models.step_propellant(
-        config.propellant, truth.gas_mass_kg, truth.valve_open, dt_s
+        config.propellant, truth.gas_mass_kg, conditions.valve_open, dt_s
     )
 
     # --- flight-systems profiles, link and packet accounting (section 7.5) ---
@@ -213,7 +215,10 @@ def step(
         temperatures_c=next_temps,
         gas_mass_kg=next_gas_kg,
         heater_on=heater_actual_on,
-        valve_open=truth.valve_open,
+        # The valve obeys its command in this build: no valve fault is modelled, so
+        # commanded and observed agree. Thruster heat, gas consumption and the
+        # electrical valve allowance all already read this one field.
+        valve_open=conditions.valve_open,
         conditions=conditions,
         tick_seq=truth.tick_seq + 1,
         sim_time_s=next_sim_time_s,

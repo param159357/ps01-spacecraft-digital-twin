@@ -256,6 +256,7 @@ export interface SimulatorConditions {
   isolator_failed: boolean;
   payload_duty_percent: number;
   heater_auto: boolean;
+  valve_open: boolean;
   mode: string;
 }
 

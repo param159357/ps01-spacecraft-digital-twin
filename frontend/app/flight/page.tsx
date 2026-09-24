@@ -196,6 +196,7 @@ export default function FlightConsole() {
                     <th className="py-1.5 pr-3 text-right font-medium">Value</th>
                     <th className="py-1.5 pr-3 font-medium">Unit</th>
                     <th className="py-1.5 pr-3 font-medium">Operating limits</th>
+                  <th className="py-1.5 pr-3 font-medium">Coverage</th>
                     <th className="py-1.5 font-medium">Quality</th>
                   </tr>
                 </thead>

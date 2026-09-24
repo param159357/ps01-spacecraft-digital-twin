@@ -46,6 +46,7 @@ class InjectedConditions(BaseModel):
     # --- known commands, visible to operators as context ---
     payload_duty_percent: float = Field(default=100.0, ge=0.0, le=100.0)
     heater_auto: bool = True
+    valve_open: bool = False
     mode: OperatingMode = OperatingMode.NOMINAL
 
     @property
@@ -65,6 +66,7 @@ class InjectedConditions(BaseModel):
         return {
             "payload_duty_percent": self.payload_duty_percent,
             "heater_auto": self.heater_auto,
+            "valve_open_commanded": self.valve_open,
             "mode": self.mode.value,
         }
 
@@ -83,6 +85,9 @@ class ConditionUpdate(BaseModel):
     isolator_failed: bool | None = None
     payload_duty_percent: float | None = Field(default=None, ge=0.0, le=100.0)
     heater_auto: bool | None = None
+    # Commanded cold-gas valve state. The channel `thruster_valve_open` is the
+    # observed status and is published separately, so the two stay distinguishable.
+    valve_open: bool | None = None
     mode: OperatingMode | None = None
 
     def apply_to(self, current: InjectedConditions) -> InjectedConditions:

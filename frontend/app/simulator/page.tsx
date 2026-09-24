@@ -138,6 +138,7 @@ export default function SimulatorConsole() {
     payload_duty_percent: 100,
     heater_stuck_on: false,
     heater_auto: true,
+    valve_open: false,
     contact_loss: false,
     branch_stuck_on: false,
     isolator_failed: false,
@@ -159,6 +160,7 @@ export default function SimulatorConsole() {
           isolator_failed: Boolean(hidden.isolator_failed),
           payload_duty_percent: Number(known.payload_duty_percent ?? 100),
           heater_auto: Boolean(known.heater_auto ?? true),
+          valve_open: Boolean(known.valve_open_commanded),
         });
       }
     } catch {
@@ -436,6 +438,11 @@ export default function SimulatorConsole() {
                 unit="%"
                 hint="A legitimate command. Operators can see it, which is what makes a mismatch detectable."
                 onCommit={(v) => void commit({ payload_duty_percent: v })}
+              />
+              <Toggle
+                label="Cold-gas valve open"
+                checked={conditions.valve_open}
+                onChange={(v) => void commit({ valve_open: v })}
               />
               <Toggle
                 label="Heater thermostat enabled"
