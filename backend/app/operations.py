@@ -37,7 +37,11 @@ class OperationalService:
         self.proposals: dict[UUID, ActionProposal] = {}
         self.commands: dict[UUID, CommandRecord] = {}
         self._last_forecast_frame: int | None = None
-        self._command_start_load: dict[UUID, tuple[int, float]] = {}
+        # command id -> (tick the command was applied at, measured load before it was).
+        # The tick is None until the command actually reaches the vehicle. That matters:
+        # the outcome must not be judged, and the baseline must not be discarded, while
+        # the command is still sitting in the queue.
+        self._command_start_load: dict[UUID, tuple[int | None, float]] = {}
         self._latest_frame: TelemetryFrame | None = None
 
     async def process_staleness(self, sim_time_s: float) -> None:
@@ -227,7 +231,9 @@ class OperationalService:
             created_at_utc=datetime.now(UTC),
         )
         self.commands[record.id] = record
-        self._command_start_load[record.id] = (0, estimate.load_w)
+        # Baseline from the latest valid observed estimate, captured now — before the
+        # command is queued, let alone applied. `None` marks it as not yet applied.
+        self._command_start_load[record.id] = (None, estimate.load_w)
         self._persist_command(record)
         return record
 
@@ -241,7 +247,11 @@ class OperationalService:
             }
         )
         self.commands[command_id] = updated
-        _, before = self._command_start_load.get(command_id, (0, load_w))
+        # Keep the baseline captured at acceptance. `load_w` here is measured on the tick
+        # the command was applied, so it already reflects the change and would make any
+        # real reduction invisible; it is only a fallback for a command whose acceptance
+        # baseline is somehow absent.
+        _, before = self._command_start_load.get(command_id, (None, load_w))
         self._command_start_load[command_id] = (tick_seq, before)
         self._persist_command(updated)
         self.bus.publish(StreamEventType.COMMAND, updated.model_dump(mode="json"), updated.run_id)
@@ -252,6 +262,11 @@ class OperationalService:
         if not isinstance(load, (int, float)):
             return failed
         for cid, (tick, before) in list(self._command_start_load.items()):
+            # Not applied yet. Judging it now would compare the vehicle against itself,
+            # report a false NO_CHANGE and throw away the acceptance baseline — which is
+            # exactly what happened when a queued command outlived a published frame.
+            if tick is None:
+                continue
             if frame.tick_seq - tick < 3:
                 continue
             record = self.commands[cid]

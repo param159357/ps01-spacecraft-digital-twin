@@ -5,6 +5,33 @@ Newest first within each phase.
 
 ---
 
+## Phase 9 — recovery outcome measured before the command, not after
+
+### A sentinel of zero made a queued command judge itself
+
+`_command_start_load` held `(applied_tick, load_before)`, and acceptance seeded it with an
+applied tick of `0` because the command had not been applied yet. The settling guard then
+read `frame.tick_seq - 0 >= 3`, which is true on essentially every frame of a running
+vehicle. So the first frame published after acceptance judged a command that was still
+sitting in the queue: it compared the vehicle against itself, recorded `NO_CHANGE`, and
+deleted the baseline. `mark_applied` then re-seeded the baseline from the frame the
+command had *just* been applied on — already reflecting the change — so a real reduction
+was arithmetically invisible.
+
+It only surfaced when a frame was published between acceptance and application. One
+comparison followed by an immediate approval usually applied on the very next tick, with
+`mark_applied` running before the outcome check, and looked correct. Trying each duty
+option first left enough time for a frame to land in between, and the demonstration's
+headline number silently became a false failure.
+
+The applied tick is now `None` until the command actually reaches the vehicle, and the
+outcome check skips anything not yet applied. The baseline is whatever valid observed
+load was measured at acceptance, and nothing later overwrites it.
+
+The wider point worth keeping: `0` was standing in for "has not happened yet" in a
+subtraction. A sentinel that is also a legal value in the arithmetic it feeds is not a
+sentinel. `None` cannot be subtracted by accident.
+
 ## Phase 9 — deployment stack, verified locally
 
 ### Live observed-state and forecast caches are scoped to one run

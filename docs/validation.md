@@ -5,6 +5,43 @@ recorded as passing because it "should" pass.
 
 ---
 
+## Phase 9 — command-outcome timing defect, found and fixed
+
+**Date:** 2026-09-24
+**Found by:** Master-console testing, comparing payload duty 0%, then 100%, then 50%, then
+approving the 50% proposal.
+
+**Symptom:** the approved command carried the right argument and measured load genuinely
+fell, but the outcome read `NO_CHANGE` against a baseline that was clearly recorded after
+application.
+
+**Root cause:** the acceptance baseline stored an applied-tick sentinel of `0`, so the
+three-tick settling guard `frame.tick_seq - 0 >= 3` passed on the next frame and judged a
+command that was still queued — discarding the baseline. `mark_applied` then re-seeded it
+from the post-application frame.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | New regression module | **8 passed**; with the fix reverted, **3 fail**, including the one reproducing the reported sequence |
+| 2 | Full backend suite | **142 passed** in 79.15 s, using the test-owned environment in `conftest.py` |
+| 3 | Ruff | `ruff check app tests ../scripts`: all checks passed |
+| 4 | TypeScript | exit 0 |
+| 5 | Frontend production build | exit 0, 9 routes |
+| 6 | Alembic | no new upgrade operations detected |
+| 7 | Compose validation | exit 0, non-secret placeholder, no `.env` read |
+
+### Live, through the real API
+
+| Sequence | Before the fix | After the fix |
+|---|---|---|
+| Compare 0%, 100%, 50%, approve 50% | `NO_CHANGE`, baseline 410.4 W recorded after application while load actually fell 450 → 410 W | **`APPLIED` then `IMPROVED`**, baseline **379.5 W** measured before approval, after **340.7 W**, applied argument `duty_percent: 50` |
+| D04 with a failed isolator | — | **`APPLIED` then `NO_CHANGE`**, 330.5 → 330.6 W — a genuine non-response still fails honestly |
+| Duplicate approval | — | same command record returned |
+
+Missing or invalid telemetry is covered by regression rather than live injection: the
+outcome check ignores a frame whose `load_power` is not `VALID`, so the verdict waits
+instead of counting a dropout as either recovery or failure.
+
 ## Phase 9 — deployment stack (hosted defect correction; re-verification pending)
 
 **Dates:** 2026-09-23–2026-09-24
